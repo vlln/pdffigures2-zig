@@ -109,7 +109,12 @@ fn inCutInterval(d: f64) bool {
     return d >= cutFilterIntervalMin and d <= cutFilterIntervalMax;
 }
 
-fn boxOnBoundary(box: Box) bool {
+fn boxOnBoundary(box: Box, dir: ProposalDirection) bool {
+    // Skip y1 check for UP proposals: a figure above a caption near the
+    // page top will naturally have y1 close to the page boundary.
+    if (dir == .up) {
+        return box.x1 <= boundaryFilterMinDistance;
+    }
     return box.x1 <= boundaryFilterMinDistance or box.y1 <= boundaryFilterMinDistance;
 }
 
@@ -478,12 +483,9 @@ fn buildProposals(
 
         // Up proposal
         if (y1 <= capt_box.y1 - MinProposalHeight) {
-            const up_box = Box.init(capt_box.x1, y1, capt_box.x2, capt_box.y1);
-            var prop = boxExpandLR(
-                up_box,
-                non_figure_content,
-                bounds,
-            );
+            const up_box = Box.init(@max(capt_box.x1, x1), y1, @min(capt_box.x2, x2), capt_box.y1);
+            var prop = boxExpandLR(up_box, non_figure_content, bounds);
+            prop = Box.init(@max(prop.x1, x1), prop.y1, @min(prop.x2, x2), prop.y2);
             // On two-column pages, force proposals to stay in the caption's column.
             // MuPDF text grouping differs from PDFBox, so boxExpandLR may not find
             // column-specific blockers and produce full-page-width proposals.
@@ -504,10 +506,11 @@ fn buildProposals(
         // Down proposal
         if (y2 >= capt_box.y2 + MinProposalHeight) {
             var prop = boxExpandLR(
-                Box.init(capt_box.x1, capt_box.y2, capt_box.x2, y2),
+                Box.init(@max(capt_box.x1, x1), capt_box.y2, @min(capt_box.x2, x2), y2),
                 non_figure_content,
                 bounds,
             );
+            prop = Box.init(@max(prop.x1, x1), prop.y1, @min(prop.x2, x2), prop.y2);
             if (two_column and page_center != null) {
                 if (capt_box.x1 > page_center.?) {
                     prop = Box.init(@max(prop.x1, page_center.?), prop.y1, prop.x2, prop.y2);
@@ -524,19 +527,11 @@ fn buildProposals(
         var valid_proposals = std.ArrayList(Proposal).empty;
         for (proposals.items) |prop| {
             const cropped = Box.crop(prop.region, all_content.items, -1);
-            if (cropped == null) {
-                continue;
-            }
+            if (cropped == null) continue;
             const cr = cropped.?;
-            if (cr.width() < MinProposalWidth or cr.height() < MinProposalHeight) {
-                continue;
-            }
-            if (boxCutsFigure(cr, possible_figure_content, page_center, capt_box)) {
-                continue;
-            }
-            if (boxOnBoundary(cr)) {
-                continue;
-            }
+            if (cr.width() < MinProposalWidth or cr.height() < MinProposalHeight) continue;
+            if (boxCutsFigure(cr, possible_figure_content, page_center, capt_box)) continue;
+            if (boxOnBoundary(cr, prop.dir)) continue;
             try valid_proposals.append(allocator, .{ .region = cr, .caption = prop.caption, .dir = prop.dir, .split_with = prop.split_with });
         }
 
@@ -589,7 +584,12 @@ fn buildProposals(
                 }
             }
             if (fy1 <= capt_box.y1 - MinProposalHeight) {
-                var prop = boxExpandLR(Box.init(capt_box.x1, fy1, capt_box.x2, capt_box.y1), non_figure_content, bounds);
+                var prop = boxExpandLR(
+                    Box.init(@max(capt_box.x1, fx1), fy1, @min(capt_box.x2, fx2), capt_box.y1),
+                    non_figure_content,
+                    bounds,
+                );
+                prop = Box.init(@max(prop.x1, fx1), prop.y1, @min(prop.x2, fx2), prop.y2);
                 if (two_column and page_center != null) {
                     if (capt_box.x1 > page_center.?) {
                         prop = Box.init(@max(prop.x1, page_center.?), prop.y1, prop.x2, prop.y2);
@@ -602,7 +602,12 @@ fn buildProposals(
                 try fallback_proposals.append(allocator, .{ .region = pruned, .caption = caption, .dir = .up });
             }
             if (fy2 >= capt_box.y2 + MinProposalHeight) {
-                var prop = boxExpandLR(Box.init(capt_box.x1, capt_box.y2, capt_box.x2, fy2), non_figure_content, bounds);
+                var prop = boxExpandLR(
+                    Box.init(@max(capt_box.x1, fx1), capt_box.y2, @min(capt_box.x2, fx2), fy2),
+                    non_figure_content,
+                    bounds,
+                );
+                prop = Box.init(@max(prop.x1, fx1), prop.y1, @min(prop.x2, fx2), prop.y2);
                 if (two_column and page_center != null) {
                     if (capt_box.x1 > page_center.?) {
                         prop = Box.init(@max(prop.x1, page_center.?), prop.y1, prop.x2, prop.y2);
@@ -624,7 +629,7 @@ fn buildProposals(
                 if (boxCutsFigure(cropped, possible_figure_content, page_center, capt_box)) {
                     continue;
                 }
-                if (boxOnBoundary(cropped)) {
+                if (boxOnBoundary(cropped, prop.dir)) {
                     continue;
                 }
                 try valid_proposals.append(allocator, .{ .region = cropped, .caption = prop.caption, .dir = prop.dir });
@@ -632,6 +637,61 @@ fn buildProposals(
         }
 
         try all_proposals.append(allocator, try valid_proposals.toOwnedSlice(allocator));
+    }
+
+    // Second-chance: uncropped DOWN proposals for captions without an UP option.
+    for (all_proposals.items, 0..) |*existing, i| {
+        var has_up = false;
+        for (existing.*) |p| {
+            if (p.dir == .up) { has_up = true; break; }
+        }
+        if (has_up) continue;
+
+        const caption = page_body.captions[i];
+        const capt_box = caption.boundary();
+
+        var x1c = bounds.x1;
+        var y1c = bounds.y1;
+        var x2c = bounds.x2;
+        var y2c = bounds.y2;
+        for (non_figure_content) |box| {
+            const alignment = boxAlignment(capt_box, box);
+            const spans_center = two_column and center_column != null and
+                box.x1 < center_column.?.x1 and box.x2 > center_column.?.x2;
+            if (alignment.h == 0) {
+                if (alignment.v == 1) {
+                    if (!spans_center) y1c = @max(y1c, box.y2);
+                } else if (alignment.v == -1) {
+                    if (!spans_center) y2c = @min(y2c, box.y1);
+                }
+            } else if (alignment.v == 0) {
+                if (alignment.h == 1) {
+                    x1c = @max(x1c, box.x2);
+                } else if (alignment.h == -1) {
+                    x2c = @min(x2c, box.x1);
+                }
+            }
+        }
+
+        if (y2c >= capt_box.y2 + MinProposalHeight) {
+            var prop = boxExpandLR(
+                Box.init(@max(capt_box.x1, x1c), capt_box.y2, @min(capt_box.x2, x2c), y2c),
+                non_figure_content,
+                bounds,
+            );
+            prop = Box.init(@max(prop.x1, x1c), prop.y1, @min(prop.x2, x2c), prop.y2);
+            const cropped = Box.crop(prop, all_content.items, -1);
+            if (cropped == null and
+                prop.width() >= MinProposalWidth and prop.height() >= MinProposalHeight and
+                !boxCutsFigure(prop, possible_figure_content, page_center, capt_box) and
+                !boxOnBoundary(prop, .down))
+            {
+                var uncropped_list = std.ArrayList(Proposal).empty;
+                try uncropped_list.appendSlice(allocator, existing.*);
+                try uncropped_list.append(allocator, .{ .region = prop, .caption = caption, .dir = .down });
+                existing.* = try uncropped_list.toOwnedSlice(allocator);
+            }
+        }
     }
 
     return all_proposals.items;
@@ -992,10 +1052,10 @@ test "boxAlignment left" {
 
 test "boxOnBoundary true" {
     const b = Box.init(5, 0, 100, 100);
-    try std.testing.expect(boxOnBoundary(b));
+    try std.testing.expect(boxOnBoundary(b, .up));
 }
 
 test "boxOnBoundary false" {
     const b = Box.init(50, 50, 100, 100);
-    try std.testing.expect(!boxOnBoundary(b));
+    try std.testing.expect(!boxOnBoundary(b, .up));
 }
