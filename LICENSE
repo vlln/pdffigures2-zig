@@ -199,13 +199,3 @@ Apache License
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
-
-   --------------------------------------------------------------------
-   This project is a Zig port of PDFFigures 2.0 originally developed by
-   the Allen Institute for Artificial Intelligence (allenai/pdffigures2).
-   https://github.com/allenai/pdffigures2
-
-   The original work is licensed under Apache License 2.0.
-   This port uses MuPDF (AGPL/commercial) as the PDF engine instead of
-   PDFBox. No code from the original Scala implementation is included.
-   --------------------------------------------------------------------

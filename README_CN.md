@@ -184,22 +184,6 @@ Zig 与 Scala 的 2 TP 差距已确认为底层 PDF 引擎（MuPDF vs. PDFBox）
 - 2 个漏检（`icml12_2`、`icml12_5`），根因为文本行分组策略差异。
 - MuPDF 页面从 0 开始编号（PDFBox 亦然），输出中 page 字段为 0 索引。
 
-## 与 pymupdf4llm 的对比
-
-[pymupdf4llm](https://github.com/pymupdf/PyMuPDF4LLM) 使用机器学习版面分析来分类页面块（picture、table、caption、text、formula 等）。它能提供更广泛的文档结构分析，但 pdffigures2-zig 在学术图表提取方面有其独特优势：
-
-| | pdffigures2-zig | pymupdf4llm |
-|--|:--:|:--:|
-| 方法 | Caption 模式匹配 + Region 提案 | ML 版面分类 |
-| Caption-Figure 关联 | 内建 | 不支持（块之间独立） |
-| 表格结构 | 仅包围盒 | 行列数、单元格、markdown |
-| 碎片化问题 | 无 | 矢量图常被拆分（28 份 PDF 中 39 个碎片） |
-| 无标题图形 | 漏检 | 能检测到 |
-| 中位内存 | 12 MB | ~1 GB+（ML 模型） |
-| 交叉验证一致率 | — | 82.1% 的 Zig 图表能被 LLM 块匹配（IoU ≥ 0.5） |
-
-两个工具定位互补：pdffigures2-zig 专注于精确的图表/Caption 提取，保证零误检；pymupdf4llm 是通用文档版面分析工具。
-
 ## 技术栈对比
 
 | 维度 | Zig | Scala |
@@ -223,9 +207,7 @@ Zig 与 Scala 的 2 TP 差距已确认为底层 PDF 引擎（MuPDF vs. PDFBox）
 - [x] 调试可视化 CLI（标注 PNG）
 - [x] C ABI 共享库
 - [x] Conference 数据集评测（召回率 94.9%，零误检）
-- [ ] PDF 转 Markdown（pymupdf4llm 功能移植）
-- [ ] 结构化表格提取（单元格级）
 
 ## 许可证
 
-本项目使用 Apache License 2.0 —— 与原始 [allenai/pdffigures2](https://github.com/allenai/pdffigures2) 相同。本项目不包含任何原始 Scala 代码，是使用不同 PDF 引擎（MuPDF）的独立 Zig 实现。详情见 [LICENSE](LICENSE)。
+Apache License 2.0。详见 [LICENSE](LICENSE)。

@@ -1,6 +1,8 @@
 # PDFFigures 2.0 (Zig)
 
 > A high-performance port of [allenai/pdffigures2](https://github.com/allenai/pdffigures2) from Scala/JVM to Zig/MuPDF — extract figures, tables, and captions from academic PDFs with zero false positives.
+>
+> [中文文档](README_CN.md)
 
 ## Motivation
 
@@ -184,22 +186,6 @@ The remaining discrepancies are attributable to engine-level differences between
 - Two missed detections (`icml12_2`, `icml12_5`) due to text line grouping strategy differences.
 - MuPDF pages are 1-indexed; PDFBox pages are 0-indexed. The Zig output uses the MuPDF convention (page 0 = first page).
 
-## Comparison with pymupdf4llm
-
-[pymupdf4llm](https://github.com/pymupdf/PyMuPDF4LLM) uses ML-based layout analysis to classify page blocks (picture, table, caption, text, formula, etc.). While it offers broader document structure analysis, pdffigures2-zig provides specific advantages for academic figure extraction:
-
-| | pdffigures2-zig | pymupdf4llm |
-|--|:--:|:--:|
-| Approach | Caption pattern matching + region proposals | ML layout classification |
-| Caption-figure linking | Built-in | Not provided (blocks are independent) |
-| Table structure | Bounding box only | Rows, columns, cells, markdown |
-| Fragment artifacts | None | Frequent on vector graphics (39 fragments in 28 PDFs) |
-| Uncaptioned graphics | Missed | Detected |
-| Median memory | 12 MB | ~1 GB+ (ML model) |
-| Cross-tool agreement | — | 82.1% of Zig figures matched by LLM blocks (IoU ≥ 0.5) |
-
-The two tools are complementary: pdffigures2-zig is purpose-built for reliable figure/caption extraction with strict precision guarantees; pymupdf4llm is a general-purpose document layout analyzer.
-
 ## Tech Stack Comparison
 
 | Aspect | Zig | Scala |
@@ -223,13 +209,9 @@ The two tools are complementary: pdffigures2-zig is purpose-built for reliable f
 - [x] Debug visualization CLI (annotated PNG)
 - [x] C ABI shared library
 - [x] Conference dataset evaluation (94.9% recall, 0 FP)
-- [ ] PDF-to-Markdown conversion (pymupdf4llm port to Zig)
-- [ ] Structured table extraction (cell-level)
 
 ## License
 
-This project is licensed under the Apache License 2.0 — the same license as the original [allenai/pdffigures2](https://github.com/allenai/pdffigures2). No code from the original Scala implementation is included; this is an independent translation to Zig using a different PDF engine (MuPDF).
+Apache License 2.0.
 
 ---
-
-[中文文档](README_CN.md)
