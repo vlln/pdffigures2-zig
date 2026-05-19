@@ -12,7 +12,7 @@ from subprocess import check_output, call, DEVNULL
 from shutil import rmtree
 
 # Add evaluation directory to path for pdffigures_utils
-sys.path.insert(0, join(dirname(__file__), "..", "pdffigures2", "evaluation"))
+sys.path.insert(0, join(dirname(__file__), "..", "..", "pdffigures2", "evaluation"))
 from pdffigures_utils import Figure, FigureType, str_to_fig_type, box_overlap, Error, EvaluatedFigure
 
 UNION_INTERSECT_OVERLAP_THRESH = 0.8

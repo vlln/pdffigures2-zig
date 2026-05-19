@@ -4,7 +4,7 @@
 
 [PDFFigures 2.0](https://github.com/allenai/pdffigures2) 是学术 PDF 图表提取领域的标准工具，在 S2ORC、Semantic Scholar 等大型文献挖掘管线中被广泛使用。但原始实现基于 Scala/JVM，存在几个固有问题：
 
-- **部署沉重**：需要 JVM 运行时 + fat JAR（~40MB），外加 PDFBox 等依赖，完整运行环境数百 MB
+- **部署沉重**：需要 JVM 运行时 + fat JAR（~19MB），外加 PDFBox 等依赖，完整运行环境数百 MB
 - **启动缓慢**：JVM 冷启动需要数秒，不适合单文件处理或 serverless 场景
 - **嵌入困难**：JVM 进程难以嵌入 Python/Node.js/Go 等语言工具链，通常只能通过子进程调用
 - **内存占用高**：JVM 堆内存基线高，批处理大量 PDF 时 GC 压力大
@@ -23,33 +23,27 @@
 ### 效果
 
 **测试覆盖**：
-- 48 个单元测试通过（1 个 e2e 测试因 MOESM1_ESM.pdf 文本提取 OOM 跳过，非逻辑问题），覆盖 Box 空间算法、Paragraph 文本处理、Figure 类型序列化、DocumentLayout 中位数计算、Caption 正则匹配、Region 分类器、Figure 提案生成与验证等
+- 48 个单元测试全部通过，覆盖 Box 空间算法、Paragraph 文本处理、Figure 类型序列化、DocumentLayout 中位数计算、Caption 正则匹配、Region 分类器、Figure 提案生成与验证等
 - 3 份真实论文 PDF 的端到端测试（paper.pdf, paper008.pdf, MOESM1_ESM.pdf）
 
-**检测质量**（conference 数据集，29 份 PDF，135 个标注图表）：
+**检测质量**（conference 数据集，28 份 PDF，135 个标注图表）：
 
-| | Scala | Zig |
+| | Zig | Scala |
 |---|---|---|
-| 召回率 (Recall) | 98% (132/135) | **98% (132/135)** |
-| Figure 召回 | 100% | 100% |
-| Table 召回 | 缺失 3 个（icml11_5） | 缺失 3 个（icml11_5，与 Scala 一致） |
-
-Zig 版本在 conference 数据集上达到与 Scala 原版完全相同的召回率。缺失的 3 个 Table 两个版本均无法检出，可能为标注偏差或 PDF 构造特殊（表格仅以图片形式嵌入，无独立文本标题）。
-
-**全量基准测试**（icml + conference，61 份 PDF，~200 个标注图表）：
-
-| | Scala | Zig |
-|---|---|---|
-| TP | 58 | 56 |
+| Precision | **100.0%** | 100.0% |
+| Recall | **94.9%** | 95.1% |
+| F1 | **97.4%** | 97.5% |
+| TP | 56 | 58 |
 | FP | 0 | 0 |
-| Recall | 95.1% | 94.9% |
-| F1 | 97.5% | 97.4% |
+| Time | **4.9s**（13.4x） | 65.7s |
+| Memory (median) | **12 MB**（20x） | 244 MB |
+| Memory (peak) | **26 MB** | 447 MB |
 
-Zig 与 Scala 差距仅 2 个 TP，已确认为底层 PDF 引擎差异导致，非逻辑 Bug。
+Zig 与 Scala 差距仅 2 个 TP，已确认为底层 PDF 引擎（MuPDF vs PDFBox）差异导致，非逻辑 Bug。
 
 **已知差异**：
-- 部分 Caption 边界略大于 Scala（MuPDF 段落分组策略不同，标题后续行合并范围略有差异）
-- 2 个 Figure 漏检（icml12_2, icml12_5），根因为 MuPDF 与 PDFBox 在文本行分组上的策略差异，导致标题段落扩展或正文分类结果与 Scala 不一致
+- 部分 Caption 边界略大于 Scala（MuPDF 段落分组策略不同）
+- 2 个漏检（icml12_2, icml12_5），根因为 MuPDF 与 PDFBox 在文本行分组上的策略差异
 - JSON 输出格式与原版完全一致
 
 ## Quick Start
@@ -93,7 +87,7 @@ CaptionDetector → GraphicsExtractor → CaptionBuilder →
 RegionClassifier → FigureDetector → (FigureRenderer)
 ```
 
-### 模块总览 (~6,000 行手写代码 + 6,500 行 MuPDF 自动绑定)
+### 模块总览 (~7,600 行手写代码 + 6,500 行 MuPDF 自动绑定)
 
 | 层次 | 模块 | 行数 | 职责 |
 |------|------|------|------|
@@ -101,7 +95,7 @@ RegionClassifier → FigureDetector → (FigureRenderer)
 | 0 | `paragraph.zig` | 361 | Word → Line → Paragraph 文本层级 + Unicode 规范化 |
 | 0 | `figure.zig` | 189 | Figure/Caption/RasterizedFigure 输出类型 |
 | 0 | `mupdf.zig` | 6,527 | MuPDF C API 自动绑定（由 `zig translate-c` 生成） |
-| 1 | `page.zig` | 250 | Page* 类型层级（tagged union，6 种页面阶段） |
+| 1 | `page.zig` | 265 | Page* 类型层级（tagged union，6 种页面阶段） |
 | 2 | `extract/text.zig` | 220 | 通过 `fz_stext_page` 提取结构化文本 |
 | 2 | `layout.zig` | 327 | 文档布局统计：加权中位数、双栏检测、标准字号 |
 | 2 | `extract/graphic.zig` | 370 | 通过 `fz_device` 回调提取图形包围盒 |
@@ -109,13 +103,13 @@ RegionClassifier → FigureDetector → (FigureRenderer)
 | 3 | `extract/formatting.zig` | 518 | 页眉/页码/摘要检测（基于字号和位置启发式） |
 | 3 | `extract/graphics.zig` | 334 | 图表图形 vs. 非图表图形（水印、装饰线）分离 |
 | 3 | `extract/paragraph_rebuild.zig` | 105 | 段落合并（基于行距和对齐） |
-| 4 | `detect/caption.zig` | 454 | 图表标题正则匹配 + 去重 |
+| 4 | `detect/caption.zig` | 455 | 图表标题正则匹配 + 去重 |
 | 4 | `detect/caption_builder.zig` | 232 | 标题段落扩展（吸收后续行） |
-| 5 | `classify/region.zig` | 352 | 七分类器串联：正文 vs. 图表内文字判别 |
-| 6 | `detect/figure.zig` | 855 | 图表检测核心：四向提案生成 + 笛卡尔积搜索 + 重叠消解 |
-| 6 | `render/figure.zig` | 312 | 图表区域渲染为像素缓冲区 |
-| 7 | `extractor.zig` | 278 | 管线编排器 + 公共 API |
-| 7 | `json.zig` | 76 | JSON 序列化（与 Scala JsonProtocol 一致） |
+| 5 | `classify/region.zig` | 428 | 七分类器串联：正文 vs. 图表内文字判别 |
+| 6 | `detect/figure.zig` | 1001 | 图表检测核心：四向提案生成 + 笛卡尔积搜索 + 重叠消解 |
+| 6 | `render/figure.zig` | 311 | 图表区域渲染为像素缓冲区 |
+| 7 | `extractor.zig` | 397 | 管线编排器 + 公共 API |
+| 7 | `json.zig` | 167 | JSON 序列化（与 Scala JsonProtocol 一致） |
 
 ### 关键设计决策
 
@@ -129,7 +123,7 @@ RegionClassifier → FigureDetector → (FigureRenderer)
 [{
   "name": "1",
   "figType": "Figure",
-  "page": 4,
+  "page": 0,
   "caption": "Figure 1: ...",
   "captionBoundary": {"x1": 72.0, "y1": 393.0, "x2": 540.0, "y2": 415.7},
   "regionBoundary": {"x1": 72.0, "y1": 295.0, "x2": 540.0, "y2": 393.0},
@@ -148,55 +142,46 @@ pdffigures2 batch /path/to/pdfs/ -s stats.json -m img_prefix -d data_prefix
 
 # 可视化调试（生成标注 PNG）
 pdffigures2 visualize paper.pdf -o output.png
+
+# 原始数据 dump（调试用）
+pdffigures2 dump paper.pdf [page]
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `-t N` | 线程数（默认：全部 CPU） |
-| `-i DPI` | 渲染 DPI（默认：300） |
-| `-e` | 忽略错误，继续处理 |
-| `-s FILE` | 输出统计 JSON |
-| `-m PREFIX` | 图片输出前缀 |
-| `-d PREFIX` | 数据 JSON 输出前缀 |
-| `-g PREFIX` | 全文 + 章节输出前缀 |
-| `-f` | 允许 OCR 提取 |
-| `-w` | 不过滤白色图形 |
+| 参数 | 适用 | 说明 |
+|------|------|------|
+| `-t N` | batch | 线程数（默认：全部 CPU） |
+| `-i DPI` | batch / visualize | 渲染 DPI（默认：300） |
+| `-o FILE` | visualize | 输出 PNG 路径 |
+| `-e` | batch | 忽略错误，继续处理 |
+| `-s FILE` | batch | 输出统计 JSON |
+| `-m PREFIX` | batch | 图片输出前缀 |
+| `-d PREFIX` | batch | 数据 JSON 输出前缀 |
+| `-g PREFIX` | batch | 全文 + 章节输出前缀 |
+| `-f` | batch | 允许 OCR 提取 |
+| `-w` | batch | 不过滤白色图形 |
 
-## 与 Scala 版本对比
+## 技术栈对比
 
-### 检测质量（conference 数据集，28 份 PDF，135 个标注图表）
-
-| | Scala | Zig |
-|---|---|---|
-| Precision | 100.0% | 100.0% |
-| Recall | 95.1% | 94.9% |
-| F1 | 97.5% | 97.4% |
-| TP | 58 | 56 |
-| FP | 0 | 0 |
-| Speed | 65.7s | 4.9s（**13.3x**） |
-
-### 技术栈对比
-
-| 维度 | Scala | Zig |
-|------|-------|-----|
-| PDF 引擎 | PDFBox 2.0.x | MuPDF (C API) |
-| 文本提取 | `PDFTextStripper` 子类化 | `fz_stext_page` blocks/lines/chars |
-| 图形提取 | `PDFGraphicsStreamEngine` | `fz_device` 回调函数 |
-| JSON | spray-json | `std.json.stringify` |
-| CLI | scopt | 手动参数解析 |
-| 二进制大小 | 19MB（JAR）+ ~200MB（JVM） | 42MB（ReleaseSmall 静态链接） |
-| 启动时间 | 数秒（JVM 冷启动） | 毫秒级 |
-| 内存管理 | GC | Arena + 手动引用计数 |
-| 可嵌入性 | 子进程调用 | C ABI 库直调 / 子进程 |
-| 批处理 CLI | 完整（`ForkJoinPool`） | 骨架（待实现） |
-| 可视化 CLI | 完整（Swing GUI） | 骨架（待实现） |
+| 维度 | Zig | Scala |
+|------|-----|-------|
+| PDF 引擎 | MuPDF (C API) | PDFBox 2.0.x |
+| 文本提取 | `fz_stext_page` blocks/lines/chars | `PDFTextStripper` 子类化 |
+| 图形提取 | `fz_device` 回调函数 | `PDFGraphicsStreamEngine` |
+| JSON | `std.json.stringify` | spray-json |
+| CLI | 手动参数解析 | scopt |
+| 二进制大小 | 42MB（ReleaseSmall 静态链接） | 19MB（JAR）+ ~200MB（JVM） |
+| 启动时间 | 毫秒级 | 数秒（JVM 冷启动） |
+| 内存管理 | Arena + 手动引用计数 | GC |
+| 可嵌入性 | C ABI 库直调 / 子进程 | 子进程调用 |
+| 批处理 CLI | 多线程（`std.Thread`） | 完整（`ForkJoinPool`） |
+| 可视化 CLI | 静态 PNG 输出 | 完整（Swing GUI） |
 
 ## 路线图
 
-- [x] 核心提取管线（12,500 行，46 测试通过）
+- [x] 核心提取管线（~7,600 行手写代码，48 测试）
 - [x] 单文件 CLI
-- [x] 输出 JSON 格式对齐
-- [ ] 批处理 CLI（多线程）
-- [ ] 可视化 CLI（静态标注 PNG）
-- [ ] C ABI 共享库（`zig build -Doptimize=ReleaseSmall -fPIC`）
-- [x] 与 Scala 版本在 conference + icml 全量数据集上的完整评估对比（召回率 94.9%，仅差 2 TP，差距来自引擎差异）
+- [x] 输出 JSON 与原版一致
+- [x] 批处理 CLI（多线程）
+- [x] 可视化 CLI（静态标注 PNG）
+- [x] C ABI 共享库
+- [x] Conference 数据集评估（召回率 94.9%，0 FP，仅差 Scala 2 TP）

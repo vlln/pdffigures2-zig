@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
     }
     lib.root_module.addLibraryPath(.{ .cwd_relative = "/home/vlln/.local/lib" });
     b.installArtifact(lib);
-    b.installFile("pdffigures2.h", "include/pdffigures2.h");
+    b.installFile("include/pdffigures2.h", "include/pdffigures2.h");
 
     // Run step
     const run_step = b.step("run", "Run the app");

@@ -29,6 +29,7 @@ test "e2e paper.pdf" {
         std.debug.print("Extraction failed: {}\n", .{err});
         return err;
     };
+    defer allocator.free(json_str);
 
     std.debug.print("paper.pdf: Extracted JSON ({d} bytes)\n", .{json_str.len});
 }
@@ -54,13 +55,14 @@ test "e2e paper008.pdf" {
     const page_count = c.fz_count_pages(ctx, doc);
     std.debug.print("\n=== paper008.pdf: {d} 页 ===\n", .{page_count});
 
-    const config = extractor.ExtractorConfig{};
-    const json_str = extractor.getFiguresJson(allocator, ctx, doc, config) catch |err| {
+    const config2 = extractor.ExtractorConfig{};
+    const json_str2 = extractor.getFiguresJson(allocator, ctx, doc, config2) catch |err| {
         std.debug.print("提取失败: {}\n", .{err});
         return err;
     };
+    defer allocator.free(json_str2);
 
-    std.debug.print("JSON 输出 ({d} 字节):\n{s}\n", .{ json_str.len, json_str });
+    std.debug.print("JSON 输出 ({d} 字节):\n{s}\n", .{ json_str2.len, json_str2 });
 }
 
 test "e2e MOESM1_ESM.pdf" {
@@ -84,11 +86,12 @@ test "e2e MOESM1_ESM.pdf" {
     const page_count = c.fz_count_pages(ctx, doc);
     std.debug.print("MOESM1_ESM.pdf: {d} pages\n", .{page_count});
 
-    const config = extractor.ExtractorConfig{};
-    const json_str = extractor.getFiguresJson(allocator, ctx, doc, config) catch |err| {
+    const config3 = extractor.ExtractorConfig{};
+    const json_str3 = extractor.getFiguresJson(allocator, ctx, doc, config3) catch |err| {
         std.debug.print("Extraction failed: {}\n", .{err});
         return err;
     };
+    defer allocator.free(json_str3);
 
-    std.debug.print("MOESM1_ESM.pdf: Extracted JSON ({d} bytes)\n", .{json_str.len});
+    std.debug.print("MOESM1_ESM.pdf: Extracted JSON ({d} bytes)\n", .{json_str3.len});
 }

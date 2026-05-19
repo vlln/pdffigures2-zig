@@ -53,20 +53,20 @@ const DocumentContent = struct {
     pages_with_figures: []const PageWithFigures,
     pages_without_figures: []const PageWithClassifiedText,
 
-    fn figures(self: DocumentContent) ![]const Figure {
+    fn figures(self: DocumentContent, allocator: std.mem.Allocator) ![]const Figure {
         var all: std.ArrayList(Figure) = .empty;
         for (self.pages_with_figures) |pf| {
-            all.appendSlice(std.heap.page_allocator, pf.figures) catch continue;
+            try all.appendSlice(allocator, pf.figures);
         }
-        return all.toOwnedSlice(std.heap.page_allocator);
+        return all.toOwnedSlice(allocator);
     }
 
-    fn failedCaptions(self: DocumentContent) ![]const Caption {
+    fn failedCaptions(self: DocumentContent, allocator: std.mem.Allocator) ![]const Caption {
         var all: std.ArrayList(Caption) = .empty;
         for (self.pages_with_figures) |pf| {
-            all.appendSlice(std.heap.page_allocator, pf.failed_captions) catch continue;
+            try all.appendSlice(allocator, pf.failed_captions);
         }
-        return all.toOwnedSlice(std.heap.page_allocator);
+        return all.toOwnedSlice(allocator);
     }
 };
 
@@ -223,8 +223,8 @@ pub fn getFigures(
 ) !FiguresInDocument {
     const content = try parseDocument(arena, ctx, doc, config);
     return FiguresInDocument{
-        .figures = try content.figures(),
-        .failed_captions = try content.failedCaptions(),
+        .figures = try content.figures(arena),
+        .failed_captions = try content.failedCaptions(arena),
     };
 }
 
@@ -257,19 +257,24 @@ pub fn getRasterizedFigures(
 
     return RasterizedFiguresInDocument{
         .figures = all_rast.items,
-        .failed_captions = try content.failedCaptions(),
+        .failed_captions = try content.failedCaptions(arena),
     };
 }
 
 /// Extract figures and output JSON string.
 pub fn getFiguresJson(
-    arena: std.mem.Allocator,
+    allocator: std.mem.Allocator,
     ctx: *c.fz_context,
     doc: *c.fz_document,
     config: ExtractorConfig,
 ) ![]const u8 {
-    const result = try getFigures(arena, ctx, doc, config);
-    return try json.figuresDocumentToJson(arena, result.figures, result.failed_captions);
+    var sub_arena = std.heap.ArenaAllocator.init(allocator);
+    defer sub_arena.deinit();
+    const sub = sub_arena.allocator();
+    const content = try parseDocument(sub, ctx, doc, config);
+    const figs = try content.figures(sub);
+    const caps = try content.failedCaptions(sub);
+    return try json.figuresDocumentToJson(allocator, figs, caps);
 }
 
 /// Per-page debug data for visualization overlays.
