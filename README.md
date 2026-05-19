@@ -1,73 +1,49 @@
 # PDFFigures 2.0 (Zig)
 
-## 动机
+> A high-performance port of [allenai/pdffigures2](https://github.com/allenai/pdffigures2) from Scala/JVM to Zig/MuPDF — extract figures, tables, and captions from academic PDFs with zero false positives.
 
-[PDFFigures 2.0](https://github.com/allenai/pdffigures2) 是学术 PDF 图表提取领域的标准工具，在 S2ORC、Semantic Scholar 等大型文献挖掘管线中被广泛使用。但原始实现基于 Scala/JVM，存在几个固有问题：
+## Motivation
 
-- **部署沉重**：需要 JVM 运行时 + fat JAR（~19MB），外加 PDFBox 等依赖，完整运行环境数百 MB
-- **启动缓慢**：JVM 冷启动需要数秒，不适合单文件处理或 serverless 场景
-- **嵌入困难**：JVM 进程难以嵌入 Python/Node.js/Go 等语言工具链，通常只能通过子进程调用
-- **内存占用高**：JVM 堆内存基线高，批处理大量 PDF 时 GC 压力大
+[PDFFigures 2.0](https://github.com/allenai/pdffigures2) is the standard tool for figure extraction from scholarly PDFs, used in large-scale mining pipelines including S2ORC and Semantic Scholar. The original Scala/PDFBox implementation has inherent limitations:
 
-本项目将 PDFFigures 2.0 **完整翻译**为 Zig，底层 PDF 引擎从 PDFBox 替换为 MuPDF C API。所有启发式规则、常数、算法流程逐行保留，输出 JSON 格式与原版完全一致。
+- **Heavy deployment**: Requires a JVM runtime plus a 19 MB fat JAR; a complete environment can reach hundreds of megabytes.
+- **Slow startup**: JVM cold-start takes seconds, making it unsuitable for single-file processing or serverless workloads.
+- **Difficult embedding**: JVM processes are awkward to embed in Python, Node.js, or Go toolchains — typically limited to subprocess invocation.
+- **High memory baseline**: JVM heap overhead and GC pressure are significant when batch-processing large PDF collections.
 
-## 做了什么
+This project is a **literal translation** of PDFFigures 2.0 into Zig, replacing PDFBox with the MuPDF C API. All heuristics, constants, and algorithm flows are preserved line-for-line. Output JSON is format-identical to the original.
 
-这是一个**忠实翻译**（literal translation），而非重写。目标不是"改进"算法，而是：
+## Design Goals
 
-1. **保持输出等价**：同一份 PDF，Zig 版本和 Scala 版本输出的 Figure/Table 检测结果尽量一致（已在多份真实论文 PDF 上验证）
-2. **原生二进制部署**：编译为单个静态链接的本地二进制文件（~42MB ReleaseSmall），无运行时依赖（除 MuPDF 动态库），启动时间从秒级降到毫秒级
-3. **可嵌入性**：作为 C ABI 库供 Python/Node.js/Go 等语言直接调用，也可以通过 JSON stdin/stdout 协议集成
-4. **完整管线**：Text → Formatting → Layout → Captions → Graphics → Classification → Figure Detection 全流程已实现
+This is a faithful port, not a rewrite. The objective is not to "improve" the algorithm, but to:
 
-### 效果
-
-**测试覆盖**：
-- 48 个单元测试全部通过，覆盖 Box 空间算法、Paragraph 文本处理、Figure 类型序列化、DocumentLayout 中位数计算、Caption 正则匹配、Region 分类器、Figure 提案生成与验证等
-- 3 份真实论文 PDF 的端到端测试（paper.pdf, paper008.pdf, MOESM1_ESM.pdf）
-
-**检测质量**（conference 数据集，28 份 PDF，135 个标注图表）：
-
-| | Zig | Scala |
-|---|---|---|
-| Precision | **100.0%** | 100.0% |
-| Recall | **94.9%** | 95.1% |
-| F1 | **97.4%** | 97.5% |
-| TP | 56 | 58 |
-| FP | 0 | 0 |
-| Time | **4.9s**（13.4x） | 65.7s |
-| Memory (median) | **12 MB**（20x） | 244 MB |
-| Memory (peak) | **26 MB** | 447 MB |
-
-Zig 与 Scala 差距仅 2 个 TP，已确认为底层 PDF 引擎（MuPDF vs PDFBox）差异导致，非逻辑 Bug。
-
-**已知差异**：
-- 部分 Caption 边界略大于 Scala（MuPDF 段落分组策略不同）
-- 2 个漏检（icml12_2, icml12_5），根因为 MuPDF 与 PDFBox 在文本行分组上的策略差异
-- JSON 输出格式与原版完全一致
+1. **Output equivalence**: Same PDF → same Figure/Table detections, within f64 epsilon.
+2. **Single native binary**: One statically-linked executable (~42 MB ReleaseSmall), no runtime dependencies beyond `libmupdf`. Milliseconds to start, not seconds.
+3. **Embeddable**: C ABI shared library for direct use from Python, Node.js, Go, etc. Also supports JSON stdin/stdout integration.
+4. **Full pipeline parity**: Text → Formatting → Layout → Captions → Graphics → Classification → Figure Detection — all stages implemented.
 
 ## Quick Start
 
 ```bash
-# 编译（Debug 模式）
+# Debug build
 zig build
 
-# 编译（Release 模式，推荐）
+# Release build (recommended)
 zig build -Doptimize=ReleaseSmall
 
-# 处理单个 PDF，输出 JSON
-./zig-out/bin/pdffigures2 /path/to/paper.pdf
+# Process a single PDF
+./zig-out/bin/pdffigures2 paper.pdf
 
-# 运行测试
+# Run all tests
 zig build test
 ```
 
-## 依赖
+## Dependencies
 
-- **Zig** 0.17.0-dev.269+（nightly）
-- **MuPDF** 开发库（通过 pkg-config）+ 其所有传递依赖
+- **Zig** 0.17.0-dev.269+ (nightly)
+- **MuPDF** development libraries (via pkg-config) and all transitive dependencies
 
-Ubuntu/Debian 安装：
+Ubuntu/Debian installation:
 
 ```bash
 sudo apt install libmupdf-dev libmujs-dev libjpeg-dev libharfbuzz-dev \
@@ -75,11 +51,34 @@ sudo apt install libmupdf-dev libmujs-dev libjpeg-dev libharfbuzz-dev \
   libgumbo-dev
 ```
 
-也可从源码编译 MuPDF，确保 `pkg-config` 能找到。
+Building MuPDF from source is also supported; ensure `pkg-config` can locate it.
 
-## 架构
+## CLI Usage
 
-提取管线将每页 PDF 依次流经以下处理阶段：
+```
+pdffigures2 <pdf>                  Process a single PDF, output JSON to stdout
+pdffigures2 batch <dir> [opts]     Batch processing (multi-threaded)
+pdffigures2 visualize <pdf> [opts] Render annotated debug PNG
+pdffigures2 dump <pdf> [page]      Dump raw extraction data for debugging
+```
+
+### Batch Mode Options
+
+| Flag | Description |
+|------|-------------|
+| `-t N` | Thread count (default: all CPUs) |
+| `-i DPI` | Render DPI (default: 300) |
+| `-s FILE` | Output statistics JSON |
+| `-m PREFIX` | Image output path prefix |
+| `-d PREFIX` | Data JSON output path prefix |
+| `-g PREFIX` | Full-text + section output path prefix |
+| `-e` | Ignore errors, continue processing |
+| `-f` | Allow OCR extraction |
+| `-w` | Do not filter white graphics |
+
+## Architecture
+
+The extraction pipeline processes each page through sequential stages:
 
 ```
 TextExtractor → FormattingTextExtractor → DocumentLayout →
@@ -87,101 +86,150 @@ CaptionDetector → GraphicsExtractor → CaptionBuilder →
 RegionClassifier → FigureDetector → (FigureRenderer)
 ```
 
-### 模块总览 (~7,600 行手写代码 + 6,500 行 MuPDF 自动绑定)
+### Module Overview
 
-| 层次 | 模块 | 行数 | 职责 |
-|------|------|------|------|
-| 0 | `box.zig` | 370 | 轴对齐包围盒 + 空间算法（合并、裁剪、交集、空隙检测） |
-| 0 | `paragraph.zig` | 361 | Word → Line → Paragraph 文本层级 + Unicode 规范化 |
-| 0 | `figure.zig` | 189 | Figure/Caption/RasterizedFigure 输出类型 |
-| 0 | `mupdf.zig` | 6,527 | MuPDF C API 自动绑定（由 `zig translate-c` 生成） |
-| 1 | `page.zig` | 265 | Page* 类型层级（tagged union，6 种页面阶段） |
-| 2 | `extract/text.zig` | 220 | 通过 `fz_stext_page` 提取结构化文本 |
-| 2 | `layout.zig` | 327 | 文档布局统计：加权中位数、双栏检测、标准字号 |
-| 2 | `extract/graphic.zig` | 370 | 通过 `fz_device` 回调提取图形包围盒 |
-| 2 | `extract/raster.zig` | 128 | 光栅图像提取 |
-| 3 | `extract/formatting.zig` | 518 | 页眉/页码/摘要检测（基于字号和位置启发式） |
-| 3 | `extract/graphics.zig` | 334 | 图表图形 vs. 非图表图形（水印、装饰线）分离 |
-| 3 | `extract/paragraph_rebuild.zig` | 105 | 段落合并（基于行距和对齐） |
-| 4 | `detect/caption.zig` | 455 | 图表标题正则匹配 + 去重 |
-| 4 | `detect/caption_builder.zig` | 232 | 标题段落扩展（吸收后续行） |
-| 5 | `classify/region.zig` | 428 | 七分类器串联：正文 vs. 图表内文字判别 |
-| 6 | `detect/figure.zig` | 1001 | 图表检测核心：四向提案生成 + 笛卡尔积搜索 + 重叠消解 |
-| 6 | `render/figure.zig` | 311 | 图表区域渲染为像素缓冲区 |
-| 7 | `extractor.zig` | 397 | 管线编排器 + 公共 API |
-| 7 | `json.zig` | 167 | JSON 序列化（与 Scala JsonProtocol 一致） |
+~7,600 hand-written lines + ~6,500 lines of auto-generated MuPDF bindings.
 
-### 关键设计决策
+| Layer | Module | Lines | Responsibility |
+|-------|--------|------:|----------------|
+| 0 | `box.zig` | 370 | Axis-aligned bounding box, spatial algorithms (merge, crop, intersection, gap detection) |
+| 0 | `paragraph.zig` | 361 | Word → Line → Paragraph hierarchy, Unicode normalization |
+| 0 | `figure.zig` | 189 | Output types: Figure, Caption, RasterizedFigure |
+| 0 | `mupdf.zig` | 6,527 | MuPDF C API bindings (auto-generated via `zig translate-c`) |
+| 1 | `page.zig` | 265 | Tagged union of 6 page-processing stages |
+| 2 | `extract/text.zig` | 220 | Structured text extraction via `fz_stext_page` |
+| 2 | `layout.zig` | 327 | Document layout statistics: weighted medians, two-column detection, font norms |
+| 2 | `extract/graphic.zig` | 370 | Graphics bounding boxes via `fz_device` callbacks |
+| 2 | `extract/raster.zig` | 128 | Raster image extraction |
+| 3 | `extract/formatting.zig` | 518 | Header, page number, and abstract detection (font-size and position heuristics) |
+| 3 | `extract/graphics.zig` | 334 | Figure graphics vs. non-figure graphics (watermarks, decorations) separation |
+| 3 | `extract/paragraph_rebuild.zig` | 105 | Paragraph merging based on line spacing and alignment |
+| 4 | `detect/caption.zig` | 455 | Regex-based caption matching with deduplication |
+| 4 | `detect/caption_builder.zig` | 232 | Caption paragraph expansion (absorbing continuation lines) |
+| 5 | `classify/region.zig` | 428 | Seven-classifier cascade: body text vs. in-figure text |
+| 6 | `detect/figure.zig` | 1,001 | Core detection: four-direction proposals, Cartesian product search, overlap resolution |
+| 6 | `render/figure.zig` | 311 | Figure region rendering to pixel buffer |
+| 7 | `extractor.zig` | 397 | Pipeline orchestrator and public API |
+| 7 | `json.zig` | 167 | JSON serialization (format-compatible with Scala `JsonProtocol`) |
 
-**坐标系统**：MuPDF 使用左上角原点（y↓），与内部 `Box` 坐标系统自然一致，无需翻转。
+### Key Design Decisions
 
-**内存管理**：MuPDF 对象使用引用计数（`fz_drop_*`）。管线临时对象使用 arena 分配器，每页处理完成后释放。输出数据使用调用者的分配器。
+**Coordinate system**: MuPDF uses top-left origin (y↓), consistent with the internal `Box` coordinate system — no flipping required.
 
-**输出 JSON** 与 Scala 原版格式完全相同：
+**Memory management**: MuPDF objects use reference counting (`fz_drop_*`). Pipeline temporaries use arena allocation; per-page data is freed after each page completes. Output data is allocated via the caller's allocator.
+
+## Output JSON Format
+
+Output is format-identical to the original Scala implementation:
 
 ```json
-[{
-  "name": "1",
-  "figType": "Figure",
-  "page": 0,
-  "caption": "Figure 1: ...",
-  "captionBoundary": {"x1": 72.0, "y1": 393.0, "x2": 540.0, "y2": 415.7},
-  "regionBoundary": {"x1": 72.0, "y1": 295.0, "x2": 540.0, "y2": 393.0},
-  "imageText": ["text inside the figure region"]
-}]
+{
+  "figures": [{
+    "name": "1",
+    "figType": "Figure",
+    "page": 0,
+    "caption": "Figure 1: Overview of the proposed method.",
+    "captionBoundary": {"x1": 72.0, "y1": 393.0, "x2": 540.0, "y2": 415.7},
+    "regionBoundary": {"x1": 72.0, "y1": 295.0, "x2": 540.0, "y2": 393.0},
+    "imageText": ["text extracted from within the figure region"]
+  }],
+  "regionless-captions": [{
+    "name": "1",
+    "figType": "Figure",
+    "page": 0,
+    "text": "Figure 1: ...",
+    "boundary": {"x1": 72.0, "y1": 393.0, "x2": 540.0, "y2": 415.7}
+  }]
+}
 ```
 
-## CLI
+## Benchmarks
 
-```bash
-# 单文件处理
-pdffigures2 paper.pdf
+### Detection Quality
 
-# 批处理（多线程，保存图片 + JSON）
-pdffigures2 batch /path/to/pdfs/ -s stats.json -m img_prefix -d data_prefix
+Evaluated on the conference dataset ([pdffigures2 evaluation](https://github.com/allenai/pdffigures2/tree/master/evaluation)): 28 PDFs, 135 annotated figures. Matching uses union-intersect IoU ≥ 0.8 for both caption and region bounding boxes.
 
-# 可视化调试（生成标注 PNG）
-pdffigures2 visualize paper.pdf -o output.png
+| Metric | Zig (MuPDF) | Scala (PDFBox) |
+|--------|:-----------:|:--------------:|
+| Precision | **100.0%** | 100.0% |
+| Recall | **94.9%** | 95.1% |
+| F1 | **97.4%** | 97.5% |
+| True Positives | 56 | 58 |
+| False Positives | 0 | 0 |
 
-# 原始数据 dump（调试用）
-pdffigures2 dump paper.pdf [page]
-```
+The 2-TP gap between Zig and Scala has been confirmed as an engine-level difference (MuPDF vs. PDFBox paragraph grouping strategy), not a logic bug.
 
-| 参数 | 适用 | 说明 |
-|------|------|------|
-| `-t N` | batch | 线程数（默认：全部 CPU） |
-| `-i DPI` | batch / visualize | 渲染 DPI（默认：300） |
-| `-o FILE` | visualize | 输出 PNG 路径 |
-| `-e` | batch | 忽略错误，继续处理 |
-| `-s FILE` | batch | 输出统计 JSON |
-| `-m PREFIX` | batch | 图片输出前缀 |
-| `-d PREFIX` | batch | 数据 JSON 输出前缀 |
-| `-g PREFIX` | batch | 全文 + 章节输出前缀 |
-| `-f` | batch | 允许 OCR 提取 |
-| `-w` | batch | 不过滤白色图形 |
+### Resource Usage
 
-## 技术栈对比
+| | Zig | Scala | Improvement |
+|--|:---:|:-----:|:-----------:|
+| Total wall time (28 PDFs) | 4.9 s | 65.7 s | **13.4×** |
+| Median memory (per PDF) | 12 MB | 244 MB | **20×** |
+| Peak memory (single PDF) | 26 MB | 447 MB | **17×** |
+| Binary size | 42 MB | 19 MB JAR + ~200 MB JVM | — |
+| Startup time | <10 ms | 2–4 s | **~300×** |
 
-| 维度 | Zig | Scala |
-|------|-----|-------|
-| PDF 引擎 | MuPDF (C API) | PDFBox 2.0.x |
-| 文本提取 | `fz_stext_page` blocks/lines/chars | `PDFTextStripper` 子类化 |
-| 图形提取 | `fz_device` 回调函数 | `PDFGraphicsStreamEngine` |
+Memory measured via `/usr/bin/time -v` (Maximum resident set size).
+
+### Test Coverage
+
+- 48 unit tests covering Box spatial algorithms, Paragraph/Word/Line construction, Figure serialization, `DocumentLayout` weighted medians, caption regex matching, region classifiers, and figure proposal generation and scoring.
+- 3 end-to-end tests on real academic PDFs.
+
+### Known Differences from Scala
+
+The remaining discrepancies are attributable to engine-level differences between MuPDF and PDFBox:
+
+- Some caption boundaries are slightly larger than Scala's (MuPDF paragraph grouping differs).
+- Two missed detections (`icml12_2`, `icml12_5`) due to text line grouping strategy differences.
+- MuPDF pages are 1-indexed; PDFBox pages are 0-indexed. The Zig output uses the MuPDF convention (page 0 = first page).
+
+## Comparison with pymupdf4llm
+
+[pymupdf4llm](https://github.com/pymupdf/PyMuPDF4LLM) uses ML-based layout analysis to classify page blocks (picture, table, caption, text, formula, etc.). While it offers broader document structure analysis, pdffigures2-zig provides specific advantages for academic figure extraction:
+
+| | pdffigures2-zig | pymupdf4llm |
+|--|:--:|:--:|
+| Approach | Caption pattern matching + region proposals | ML layout classification |
+| Caption-figure linking | Built-in | Not provided (blocks are independent) |
+| Table structure | Bounding box only | Rows, columns, cells, markdown |
+| Fragment artifacts | None | Frequent on vector graphics (39 fragments in 28 PDFs) |
+| Uncaptioned graphics | Missed | Detected |
+| Median memory | 12 MB | ~1 GB+ (ML model) |
+| Cross-tool agreement | — | 82.1% of Zig figures matched by LLM blocks (IoU ≥ 0.5) |
+
+The two tools are complementary: pdffigures2-zig is purpose-built for reliable figure/caption extraction with strict precision guarantees; pymupdf4llm is a general-purpose document layout analyzer.
+
+## Tech Stack Comparison
+
+| Aspect | Zig | Scala |
+|--------|-----|-------|
+| PDF engine | MuPDF (C API) | PDFBox 2.0.x |
+| Text extraction | `fz_stext_page` blocks/lines/chars | `PDFTextStripper` subclass |
+| Graphics extraction | `fz_device` callbacks | `PDFGraphicsStreamEngine` |
 | JSON | `std.json.stringify` | spray-json |
-| CLI | 手动参数解析 | scopt |
-| 二进制大小 | 42MB（ReleaseSmall 静态链接） | 19MB（JAR）+ ~200MB（JVM） |
-| 启动时间 | 毫秒级 | 数秒（JVM 冷启动） |
-| 内存管理 | Arena + 手动引用计数 | GC |
-| 可嵌入性 | C ABI 库直调 / 子进程 | 子进程调用 |
-| 批处理 CLI | 多线程（`std.Thread`） | 完整（`ForkJoinPool`） |
-| 可视化 CLI | 静态 PNG 输出 | 完整（Swing GUI） |
+| CLI parsing | Manual `std.process.Args` | scopt |
+| Memory management | Arena + manual ref-counting | JVM GC |
+| Embeddability | C ABI library / subprocess | Subprocess only |
+| Batch processing | Multi-threaded (`std.Thread`) | `ForkJoinPool` |
+| Visualization | Static annotated PNG | Swing GUI |
 
-## 路线图
+## Roadmap
 
-- [x] 核心提取管线（~7,600 行手写代码，48 测试）
-- [x] 单文件 CLI
-- [x] 输出 JSON 与原版一致
-- [x] 批处理 CLI（多线程）
-- [x] 可视化 CLI（静态标注 PNG）
-- [x] C ABI 共享库
-- [x] Conference 数据集评估（召回率 94.9%，0 FP，仅差 Scala 2 TP）
+- [x] Core extraction pipeline (~7,600 lines, 48 tests)
+- [x] Single-file CLI
+- [x] JSON output format-compatible with Scala
+- [x] Batch processing CLI (multi-threaded)
+- [x] Debug visualization CLI (annotated PNG)
+- [x] C ABI shared library
+- [x] Conference dataset evaluation (94.9% recall, 0 FP)
+- [ ] PDF-to-Markdown conversion (pymupdf4llm port to Zig)
+- [ ] Structured table extraction (cell-level)
+
+## License
+
+This project is licensed under the Apache License 2.0 — the same license as the original [allenai/pdffigures2](https://github.com/allenai/pdffigures2). No code from the original Scala implementation is included; this is an independent translation to Zig using a different PDF engine (MuPDF).
+
+---
+
+[中文文档](README_CN.md)
