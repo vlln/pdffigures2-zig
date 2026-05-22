@@ -144,3 +144,21 @@ The authoritative reference is at `../pdffigures2/src/main/scala/org/allenai/pdf
 2. **Caption text**: Some captions may differ slightly due to MuPDF paragraph grouping differences vs PDFBox
 3. **Extra detections**: Zig may find additional figures Scala misses (confirmed correct in testing on paper008.pdf)
 4. **MuPDF bindings**: `mupdf.zig` is auto-generated via `zig translate-c`. If MuPDF headers change, regenerate.
+
+## MuPDF-Specific Adaptations
+
+These are intentional deviations from Scala that compensate for MuPDF vs PDFBox differences:
+
+### figure.zig (FigureDetector)
+- **crop_content filter**: On two-column pages, column-spanning content is excluded from `Box.crop` to prevent over-cropping of single-column proposals. MuPDF captures full-width graphics/paragraphs that PDFBox doesn't.
+- **Over-expansion constraints**: When no horizontal blockers exist, proposals are constrained to caption x-range + margin to avoid full-column-width proposals. MuPDF's `boxExpandLR` expands further due to different content box distribution.
+- **Second-chance proposals**: Additional UP/DOWN proposals are attempted with relaxed constraints and `possible_figure_content`-based cropping when primary proposals fail.
+
+### graphic.zig (GraphicsExtractor)
+- **fillShade**: Intentionally a no-op, matching PDFBox's `GraphicBBDetector` behavior which does not intercept shading operations. MuPDF would otherwise capture gradient-filled background rectangles.
+
+### text.zig (TextExtractor)
+- **Gap-based word splitting**: When character-to-character gaps exceed a threshold (2× font size or 4pt), characters are split into separate words. Handles table data where PDF producers use absolute positioning instead of space characters.
+
+### classifyIsTitle (RegionClassifier)
+- Now fully implemented matching Scala's logic: alignment/centering check → title-start text → title-style (font consistency, non-standard fonts, all-caps detection). The original Zig stub checked only font size and was incorrect.

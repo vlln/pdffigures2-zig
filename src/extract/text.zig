@@ -23,6 +23,12 @@ const MinHeightToClipText: f64 = 40.0;
 /// Height to clip overly tall text to.
 const HeightToClipTextTo: f64 = 10.0;
 
+/// Minimum horizontal gap (as fraction of font size) to split characters into separate words.
+/// Handles table data where PDF producers use absolute positioning instead of space characters.
+const MinWordGapFraction: f64 = 2.0;
+const MinWordGapAbsolute: f64 = 4.0;
+const DefaultFontSizeForGap: f64 = 8.0;
+
 /// Extract structured text from a MuPDF document.
 /// Returns a list of PageWithText, one per page.
 pub fn extractText(arena: std.mem.Allocator, ctx: *c.fz_context, doc: *c.fz_document) ![]PageWithText {
@@ -74,9 +80,52 @@ pub fn extractText(arena: std.mem.Allocator, ctx: *c.fz_context, doc: *c.fz_docu
                 var word_font_name: ?[]const u8 = null;
                 var word_font_size: ?f64 = null;
 
+                var prev_char_max_x: ?f64 = null;
+
                 var char_node: ?*c.fz_stext_char = @ptrCast(@alignCast(stext_line.first_char));
                 while (char_node) |ch| : (char_node = @ptrCast(@alignCast(ch.*.next))) {
                     const codepoint: u21 = @intCast(ch.*.c);
+
+                    // Compute character bounding box from quad
+                    const q = ch.*.quad;
+                    const char_min_x: f64 = @floatCast(@min(@min(q.ul.x, q.ur.x), @min(q.ll.x, q.lr.x)));
+                    const char_min_y: f64 = @floatCast(@min(@min(q.ul.y, q.ur.y), @min(q.ll.y, q.lr.y)));
+                    const char_max_x: f64 = @floatCast(@max(@max(q.ul.x, q.ur.x), @max(q.ll.x, q.lr.x)));
+                    const char_max_y: f64 = @floatCast(@max(@max(q.ul.y, q.ur.y), @max(q.ll.y, q.lr.y)));
+
+                    // Gap-based word splitting for table data with absolute positioning
+                    if (string_buf.items.len > 0 and
+                        !(codepoint == ' ' or codepoint == '\t' or codepoint == '\n' or
+                            codepoint == '\r' or codepoint <= 0x1F or
+                            (codepoint >= 0x7F and codepoint <= 0x9F)))
+                    {
+                        if (prev_char_max_x) |prev_x| {
+                            const gap = char_min_x - prev_x;
+                            if (gap > 0) {
+                                const fs = word_font_size orelse DefaultFontSizeForGap;
+                                const threshold = @max(fs * MinWordGapFraction, MinWordGapAbsolute);
+                                if (gap > threshold) {
+                                    const word = try finishWord(
+                                        arena,
+                                        string_buf.items,
+                                        min_x, min_y, max_x, max_y,
+                                        stext_line.wmode != 0,
+                                        word_font_name,
+                                        word_font_size,
+                                    );
+                                    try words_in_line.append(arena, word);
+                                    string_buf.clearAndFree(arena);
+                                    string_buf = .empty;
+                                    min_x = std.math.floatMax(f64);
+                                    min_y = std.math.floatMax(f64);
+                                    max_x = -std.math.floatMax(f64);
+                                    max_y = -std.math.floatMax(f64);
+                                    word_font_name = null;
+                                    word_font_size = null;
+                                }
+                            }
+                        }
+                    }
 
                     // Check if this is a space or control character
                     if (codepoint == ' ' or
@@ -120,13 +169,6 @@ pub fn extractText(arena: std.mem.Allocator, ctx: *c.fz_context, doc: *c.fz_docu
                             }
                         }
 
-                        // Compute bounding box from the character quad
-                        const q = ch.*.quad;
-                        const char_min_x: f64 = @floatCast(@min(@min(q.ul.x, q.ur.x), @min(q.ll.x, q.lr.x)));
-                        const char_min_y: f64 = @floatCast(@min(@min(q.ul.y, q.ur.y), @min(q.ll.y, q.lr.y)));
-                        const char_max_x: f64 = @floatCast(@max(@max(q.ul.x, q.ur.x), @max(q.ll.x, q.lr.x)));
-                        const char_max_y: f64 = @floatCast(@max(@max(q.ul.y, q.ur.y), @max(q.ll.y, q.lr.y)));
-
                         // Clip height if abnormally large
                         const char_height = char_max_y - char_min_y;
                         const effective_min_y = if (char_height > MinHeightToClipText)
@@ -138,6 +180,8 @@ pub fn extractText(arena: std.mem.Allocator, ctx: *c.fz_context, doc: *c.fz_docu
                         min_y = @min(min_y, effective_min_y);
                         max_x = @max(max_x, char_max_x);
                         max_y = @max(max_y, char_max_y);
+
+                        prev_char_max_x = char_max_x;
                     }
                 }
 

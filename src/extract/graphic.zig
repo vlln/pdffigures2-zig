@@ -235,23 +235,12 @@ fn fillShade(
     alpha: f32,
     _: c.fz_color_params,
 ) callconv(.c) void {
+    _ = ctx;
+    _ = dev;
+    _ = shd;
+    _ = ctm;
     _ = alpha;
-    const gfx: *GfxDevice = @ptrCast(@alignCast(dev));
-    const state = gfx.state;
-    const rect = c.fz_bound_shade(ctx, shd, ctm);
-    if (c.fz_is_empty_rect(rect) != 0) return;
-
-    const scissor = c.fz_device_current_scissor(state.ctx, &gfx.base);
-    const clipped = if (c.fz_is_infinite_rect(scissor) != 0) rect else c.fz_intersect_rect(rect, scissor);
-    if (c.fz_is_empty_rect(clipped) != 0) return;
-
-    const b = Box.init(
-        @floatCast(clipped.x0),
-        @floatCast(clipped.y0),
-        @floatCast(clipped.x1),
-        @floatCast(clipped.y1),
-    );
-    state.bounds.append(state.allocator, b) catch {};
+    // PDFBox GraphicBBDetector does not intercept shading operations
 }
 
 fn fillImage(

@@ -397,6 +397,20 @@ fn buildProposals(
     const center_column = if (two_column) try findCenterColumn(allocator, page_body) else null;
     const page_center: ?f64 = if (center_column) |cc| (cc.x1 + cc.x2) / 2.0 else null;
 
+    // On two-column pages, filter out page-spanning content for Box.crop.
+    // Full-width headers and MuPDF-captured graphics that span both columns
+    // cause over-cropping of single-column proposals.
+    var crop_content = std.ArrayList(Box).empty;
+    if (page_center) |pc| {
+        for (all_content.items) |b| {
+            if (!(b.x1 < pc and b.x2 > pc)) {
+                try crop_content.append(allocator, b);
+            }
+        }
+    } else {
+        try crop_content.appendSlice(allocator, all_content.items);
+    }
+
     // Find content that crosses the center
     var crosses_center = std.ArrayList(Box).empty;
     if (center_column) |cc| {
@@ -439,7 +453,6 @@ fn buildProposals(
                 }
             }
         }
-
 
         var proposals = std.ArrayList(Proposal).empty;
 
@@ -496,6 +509,33 @@ fn buildProposals(
                     prop = Box.init(prop.x1, prop.y1, @min(prop.x2, page_center.?), prop.y2);
                 }
             }
+            // When nothing blocks horizontal expansion, boxExpandLR produces
+            // full-column-width proposals. Constrain to the initial up_box
+            // x-range + margin to avoid over-expanding in the absence of blockers.
+            {
+                const cap_w = up_box.x2 - up_box.x1;
+                const prop_w = prop.x2 - prop.x1;
+                const no_h_blockers = prop.x1 == x1 and prop.x2 == x2;
+                if (prop_w > cap_w * 1.3 or (no_h_blockers and prop_w > cap_w + 20)) {
+                    var has_wider_content = false;
+                    for (page_body.graphics) |g| {
+                        if (g.intersects(prop, 0) and
+                            (g.x1 < capt_box.x1 - 5 or g.x2 > capt_box.x2 + 5))
+                        {
+                            has_wider_content = true;
+                            break;
+                        }
+                    }
+                    if (!has_wider_content) {
+                        prop = Box.init(
+                            @max(prop.x1, capt_box.x1 - 10),
+                            prop.y1,
+                            @min(prop.x2, capt_box.x2 + 10),
+                            prop.y2,
+                        );
+                    }
+                }
+            }
             if (two_column) {
                 prop = cropToCenter(capt_box, prop, crosses_center.items, page_center.?);
             }
@@ -518,6 +558,31 @@ fn buildProposals(
                     prop = Box.init(prop.x1, prop.y1, @min(prop.x2, page_center.?), prop.y2);
                 }
             }
+            // Constrain DOWN proposals that expanded excessively
+            {
+                const cap_w = capt_box.x2 - capt_box.x1;
+                const prop_w = prop.x2 - prop.x1;
+                const no_h_blockers = prop.x1 == x1 and prop.x2 == x2;
+                if (prop_w > cap_w * 1.3 or (no_h_blockers and prop_w > cap_w + 20)) {
+                    var has_wider_content = false;
+                    for (page_body.graphics) |g| {
+                        if (g.intersects(prop, 0) and
+                            (g.x1 < capt_box.x1 - 5 or g.x2 > capt_box.x2 + 5))
+                        {
+                            has_wider_content = true;
+                            break;
+                        }
+                    }
+                    if (!has_wider_content) {
+                        prop = Box.init(
+                            @max(prop.x1, capt_box.x1 - 10),
+                            prop.y1,
+                            @min(prop.x2, capt_box.x2 + 10),
+                            prop.y2,
+                        );
+                    }
+                }
+            }
             if (two_column) {
                 prop = cropToCenter(capt_box, prop, crosses_center.items, page_center.?);
             }
@@ -526,12 +591,56 @@ fn buildProposals(
 
         var valid_proposals = std.ArrayList(Proposal).empty;
         for (proposals.items) |prop| {
-            const cropped = Box.crop(prop.region, all_content.items, -1);
-            if (cropped == null) continue;
+            var cropped = Box.crop(prop.region, crop_content.items, -1);
+            if (cropped == null and crop_content.items.len != all_content.items.len) {
+                cropped = Box.crop(prop.region, all_content.items, -1);
+            }
+            // Body text spanning the full column width can prevent Box.crop from
+            // producing tight bounds around the actual figure content. Try a second
+            // crop against only possible_figure_content for a tighter fit.
+            if (cropped) |cr| {
+                // When Box.crop didn't tighten x-range (still at proposal edges),
+                // the content boxes span the full column width. Constrain to the
+                // caption's x-range with a tight margin.
+                if (prop.dir == .up) {
+                    var cr_val = cr;
+                    if (cr_val.x1 == prop.region.x1 and cr_val.x2 == prop.region.x2) {
+                        const margin: f64 = 2;
+                        cr_val = Box.init(
+                            @max(cr_val.x1, capt_box.x1 - margin),
+                            cr_val.y1,
+                            @min(cr_val.x2, capt_box.x2 + margin),
+                            cr_val.y2,
+                        );
+                    }
+                    if (cr_val.area() < cr.area()) {
+                        cropped = cr_val;
+                    }
+                }
+            }
+            if (cropped == null) {
+                continue;
+            }
             const cr = cropped.?;
-            if (cr.width() < MinProposalWidth or cr.height() < MinProposalHeight) continue;
-            if (boxCutsFigure(cr, possible_figure_content, page_center, capt_box)) continue;
-            if (boxOnBoundary(cr, prop.dir)) continue;
+            if (cr.width() < MinProposalWidth or cr.height() < MinProposalHeight) {
+                continue;
+            }
+            if (boxCutsFigure(cr, possible_figure_content, page_center, capt_box)) {
+                continue;
+            }
+            if (boxOnBoundary(cr, prop.dir)) {
+                continue;
+            }
+            if (prop.dir == .down) {
+                var contains_other = false;
+                for (page_body.captions) |other| {
+                    if (cr.contains(other.boundary(), -2)) {
+                        contains_other = true;
+                        break;
+                    }
+                }
+                if (contains_other) continue;
+            }
             try valid_proposals.append(allocator, .{ .region = cr, .caption = prop.caption, .dir = prop.dir, .split_with = prop.split_with });
         }
 
@@ -620,7 +729,17 @@ fn buildProposals(
             }
 
             for (fallback_proposals.items) |prop| {
-                const cropped = Box.crop(prop.region, all_content.items, -1) orelse {
+                var cropped_fb = Box.crop(prop.region, all_content.items, -1);
+                if (cropped_fb) |cr| {
+                    if (prop.dir == .up and possible_figure_content.len > 0) {
+                        if (Box.crop(prop.region, possible_figure_content, -1)) |pfc| {
+                            if (pfc.area() < cr.area() * 0.9) {
+                                cropped_fb = pfc;
+                            }
+                        }
+                    }
+                }
+                const cropped = cropped_fb orelse {
                     continue;
                 };
                 if (cropped.width() < MinProposalWidth or cropped.height() < MinProposalHeight) {
@@ -631,6 +750,17 @@ fn buildProposals(
                 }
                 if (boxOnBoundary(cropped, prop.dir)) {
                     continue;
+                }
+                if (prop.dir == .down) {
+                    var contains_other = false;
+                    for (page_body.captions) |other| {
+                        if (cropped.contains(other.boundary(), -2)) {
+                            contains_other = true;
+                            break;
+                        }
+                    }
+                    if (contains_other) continue;
+                    if (cropped.height() < prop.caption.boundary().height() + MinProposalHeight) continue;
                 }
                 try valid_proposals.append(allocator, .{ .region = cropped, .caption = prop.caption, .dir = prop.dir });
             }
@@ -673,6 +803,7 @@ fn buildProposals(
             }
         }
 
+        // Try DOWN second-chance
         if (y2c >= capt_box.y2 + MinProposalHeight) {
             var prop = boxExpandLR(
                 Box.init(@max(capt_box.x1, x1c), capt_box.y2, @min(capt_box.x2, x2c), y2c),
@@ -686,10 +817,62 @@ fn buildProposals(
                 !boxCutsFigure(prop, possible_figure_content, page_center, capt_box) and
                 !boxOnBoundary(prop, .down))
             {
-                var uncropped_list = std.ArrayList(Proposal).empty;
-                try uncropped_list.appendSlice(allocator, existing.*);
-                try uncropped_list.append(allocator, .{ .region = prop, .caption = caption, .dir = .down });
-                existing.* = try uncropped_list.toOwnedSlice(allocator);
+                var contains_other = false;
+                for (page_body.captions) |other| {
+                    if (prop.contains(other.boundary(), -2)) {
+                        contains_other = true;
+                        break;
+                    }
+                }
+                if (!contains_other and prop.height() >= caption.boundary().height() + MinProposalHeight) {
+                    var uncropped_list = std.ArrayList(Proposal).empty;
+                    try uncropped_list.appendSlice(allocator, existing.*);
+                    try uncropped_list.append(allocator, .{ .region = prop, .caption = caption, .dir = .down });
+                    existing.* = try uncropped_list.toOwnedSlice(allocator);
+                }
+            }
+        }
+
+        // Try UP second-chance: when body_text blocks UP but graphics exist above caption,
+        // recompute y1c with distance-based relaxation for text very close to caption.
+        {
+            var y1u = bounds.y1;
+            for (non_figure_content) |box| {
+                const alignment = boxAlignment(capt_box, box);
+                const spans_center = two_column and center_column != null and
+                    box.x1 < center_column.?.x1 and box.x2 > center_column.?.x2;
+                if (alignment.h == 0 and alignment.v == 1 and !spans_center) {
+                    const dist = capt_box.y1 - box.y2;
+                    const nearby = @max(doc_layout.median_line_spacing * 2.0, 20.0);
+                    if (dist > nearby) {
+                        y1u = @max(y1u, box.y2);
+                    }
+                }
+            }
+            const up_region = Box.init(
+                @max(capt_box.x1, x1c),
+                y1u,
+                @min(capt_box.x2, x2c),
+                capt_box.y1,
+            );
+            if (up_region.height() >= MinProposalHeight) {
+                const cropped = Box.crop(
+                    Box.init(up_region.x1, up_region.y1, up_region.x2, up_region.y2),
+                    possible_figure_content,
+                    -1,
+                );
+                if (cropped != null and
+                    cropped.?.area() < up_region.area() * 0.9 and
+                    cropped.?.height() >= MinProposalHeight and
+                    cropped.?.width() >= MinProposalWidth and
+                    !boxCutsFigure(cropped.?, possible_figure_content, page_center, capt_box) and
+                    !boxOnBoundary(cropped.?, .up))
+                {
+                    var new_list = std.ArrayList(Proposal).empty;
+                    try new_list.appendSlice(allocator, existing.*);
+                    try new_list.append(allocator, .{ .region = cropped.?, .caption = caption, .dir = .up });
+                    existing.* = try new_list.toOwnedSlice(allocator);
+                }
             }
         }
     }

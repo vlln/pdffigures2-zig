@@ -213,10 +213,16 @@ fn buildCaption(
         }
     }
 
-    // Prune caption paragraph: clip y1 to first word's y1
+    // Prune caption paragraph: clip y1 to first word's y1, y2 to last word's y2
     var pruned_bb = state.boundary;
     if (state.lines.items.len > 0 and state.lines.items[0].words.len > 0) {
         pruned_bb.y1 = state.lines.items[0].words[0].boundary.y1;
+    }
+    if (state.lines.items.len > 0) {
+        const last_line = state.lines.items[state.lines.items.len - 1];
+        if (last_line.words.len > 0) {
+            pruned_bb.y2 = last_line.words[last_line.words.len - 1].boundary.y2;
+        }
     }
 
     const lines_slice = try arena.dupe(Line, state.lines.items);

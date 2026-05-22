@@ -134,11 +134,158 @@ fn classifySmallFont(p: Paragraph, standard_font_size: ?f64) ?bool {
     return null;
 }
 
+const TextAlignmentTolerance = 2.0;
+const MinSharedMargin = 0.1;
+
+fn isAlignedOrCentered(boundary: Box, dl: *const DocumentLayout) bool {
+    const is_center = if (dl.standard_width_bucketed) |sw| blk: {
+        const x1 = boundary.xCenter() - sw / TextAlignmentTolerance;
+        const x1_floor: i32 = @intFromFloat(@floor(x1));
+        const x1_ceil: i32 = @intFromFloat(@ceil(x1));
+        var margin_count: f64 = 0;
+        if (dl.left_margins.get(x1_floor)) |f| margin_count += f;
+        if (dl.left_margins.get(x1_ceil)) |f| margin_count += f;
+        break :blk margin_count > MinSharedMargin;
+    } else false;
+
+    const left_aligned = if (dl.trust_left_margin) blk: {
+        const x1_floor: i32 = @intFromFloat(@floor(boundary.x1));
+        const x1_ceil: i32 = @intFromFloat(@ceil(boundary.x1));
+        var margin_count: f64 = 0;
+        if (dl.left_margins.get(x1_floor)) |f| margin_count += f;
+        if (dl.left_margins.get(x1_ceil)) |f| margin_count += f;
+        break :blk margin_count > MinSharedMargin;
+    } else false;
+
+    return left_aligned or is_center;
+}
+
+fn matchesNumberRegex(text: []const u8) bool {
+    if (text.len == 0) return false;
+    if (text[0] < '1' or text[0] > '9') return false;
+    var i: usize = 1;
+    while (i < text.len) : (i += 1) {
+        const c = text[i];
+        if (c == '.') {
+            i += 1;
+            if (i >= text.len) return true;
+            if (text[i] < '1' or text[i] > '9') return false;
+        } else if (c >= '0' and c <= '9') {
+            continue;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+fn matchesRomanNumeralRegex(text: []const u8) bool {
+    if (text.len == 0) return false;
+    for (text) |c| {
+        if (c == 'I' or c == 'V' or c == 'X') continue;
+        if (c == '.') continue;
+        return false;
+    }
+    return text[0] == 'I' or text[0] == 'V' or text[0] == 'X';
+}
+
+fn matchesLetterNumberRegex(text: []const u8) bool {
+    if (text.len < 2) return false;
+    if (!std.ascii.isUpper(text[0])) return false;
+    if (text[1] == '.') return true;
+    var i: usize = 1;
+    while (i < text.len) : (i += 1) {
+        const c = text[i];
+        if (c >= '1' and c <= '9') continue;
+        if (c == '.') continue;
+        return false;
+    }
+    return true;
+}
+
+fn matchesAppendixRegex(text: []const u8) bool {
+    if (text.len < 8) return false;
+    const lower = blk: {
+        var buf: [16]u8 = undefined;
+        const n = @min(text.len, buf.len);
+        for (text[0..n], 0..) |c, j| {
+            buf[j] = std.ascii.toLower(c);
+        }
+        break :blk buf[0..n];
+    };
+    return std.mem.startsWith(u8, lower, "appendix");
+}
+
+fn isPrefixed(line: Line) bool {
+    if (line.words.len == 1) return false;
+    const first = line.words[0].text;
+    return matchesNumberRegex(first) or
+        matchesRomanNumeralRegex(first) or
+        matchesLetterNumberRegex(first) or
+        matchesAppendixRegex(first);
+}
+
+fn isTitleStartText(line: Line) bool {
+    if (line.words.len == 0) return false;
+    const text = line.words[0].text;
+    if (text.len <= 1) return false;
+    return std.ascii.isUpper(text[0]) or isPrefixed(line);
+}
+
+fn isTitleStyle(line: Line, dl: *const DocumentLayout) bool {
+    var total_words: u32 = 0;
+    var non_standard_font: u32 = 0;
+    var small_font_count: u32 = 0;
+    var common_font_name: ?[]const u8 = null;
+    var same_font = true;
+
+    for (line.words) |word| {
+        total_words += 1;
+        if (word.font_name) |fnm| {
+            if (common_font_name) |cfn| {
+                if (!std.mem.eql(u8, fnm, cfn)) same_font = false;
+            } else {
+                common_font_name = fnm;
+            }
+            if (dl.font_fractions.get(fnm)) |frac| {
+                if (frac < 0.1) non_standard_font += 1;
+            } else {
+                non_standard_font += 1;
+            }
+        }
+        if (word.font_size) |fs| {
+            if (dl.standard_font_size) |sf| {
+                if (sf < 20 and fs < sf - 1.0) small_font_count += 1;
+            }
+        }
+    }
+
+    const trust_font_size = dl.standard_font_size != null and dl.standard_font_size.? < 20;
+    const small_font = trust_font_size and small_font_count > total_words / 2;
+
+    var has_lowercase = false;
+    for (line.words) |word| {
+        for (word.text) |c| {
+            if (std.ascii.isLower(c)) {
+                has_lowercase = true;
+                break;
+            }
+        }
+        if (has_lowercase) break;
+    }
+    const is_all_caps = !has_lowercase;
+
+    return same_font and (!small_font and non_standard_font > total_words / 2 or is_all_caps);
+}
+
 fn classifyIsTitle(p: Paragraph, dl: *const DocumentLayout) ?bool {
-    // Check alignment, title start text, and title style — stub since isTitleStyle depends on font counts
-    _ = p;
-    _ = dl;
-    return null;
+    if (p.lines.len > 3) return null;
+    if (!isAlignedOrCentered(p.boundary, dl)) return null;
+    if (!isTitleStartText(p.lines[0])) return null;
+    for (p.lines) |line| {
+        if (!isTitleStyle(line, dl)) return null;
+    }
+    return true; // Title → body text
 }
 
 fn classifyMargins(p: Paragraph, trust_left_margin: bool, left_margins: std.AutoHashMap(i32, f64)) ?bool {
@@ -322,23 +469,6 @@ pub fn classifyRegions(
         }
     }
 
-    // Compute median paragraph width for filtering MuPDF-captured background graphics.
-    // Skip narrow paragraphs (< 50pt) which are typically figure-internal text (axis labels,
-    // legend entries) that would skew the median downward on figure-heavy pages.
-    var median_para_width: f64 = 0;
-    if (doc_layout.two_columns) {
-        var widths = std.ArrayList(f64).empty;
-        defer widths.deinit(allocator);
-        for (separated_paras.items) |para| {
-            const w = para.boundary.width();
-            if (w >= 50) try widths.append(allocator, w);
-        }
-        if (widths.items.len > 0) {
-            std.mem.sort(f64, widths.items, {}, std.sort.asc(f64));
-            median_para_width = widths.items[widths.items.len / 2];
-        }
-    }
-
     // Detect graphics that contain captions (figure bounding boxes)
     var figures_bbox_graphics = std.ArrayList(Box).empty;
     var rest_graphics = std.ArrayList(Box).empty;
@@ -393,22 +523,14 @@ pub fn classifyRegions(
         ));
     }
 
-    // Combine: rest graphics + cropped figure graphics
-    // On two-column pages, filter rest_graphics that span both columns (MuPDF captures
-    // full-width background rectangles that PDFBox doesn't, and they block proposals).
+    // Combine: rest graphics + cropped figure graphics (matching Scala)
     var final_graphics = std.ArrayList(Box).empty;
+    try final_graphics.appendSlice(allocator, rest_graphics.items);
+    try final_graphics.appendSlice(allocator, cropped_figure_graphics.items);
+
     var final_non_figure = std.ArrayList(Box).empty;
     try final_non_figure.appendSlice(allocator, page_captions.non_figure_graphics);
     try final_non_figure.appendSlice(allocator, figure_borders.items);
-
-    for (rest_graphics.items) |g| {
-        if (median_para_width > 0 and g.width() > median_para_width * 2.0) {
-            try final_non_figure.append(allocator, g);
-        } else {
-            try final_graphics.append(allocator, g);
-        }
-    }
-    try final_graphics.appendSlice(allocator, cropped_figure_graphics.items);
 
     return PageWithBodyText.init(
         page_captions.page_number,

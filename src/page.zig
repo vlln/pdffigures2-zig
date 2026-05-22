@@ -64,6 +64,7 @@ pub const PageWithGraphics = struct {
     paragraphs: []const Paragraph,
     graphics: []const Box,
     non_figure_graphics: []const Box,
+    raw_graphics: []const Box,
     classified_text: ClassifiedText,
 };
 

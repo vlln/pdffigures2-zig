@@ -6,6 +6,7 @@ const std = @import("std");
 const figure = @import("figure.zig");
 const Figure = figure.Figure;
 const Caption = figure.Caption;
+const SavedFigure = figure.SavedFigure;
 const Box = @import("box.zig").Box;
 
 /// Serializable representation of a Figure for JSON output.
@@ -36,7 +37,20 @@ pub const BoxJson = struct {
     y2: f64,
 };
 
-/// Top-level JSON output matching Scala's format.
+/// Serializable representation of a SavedFigure for JSON output (when -m is used).
+pub const SavedFigureJson = struct {
+    name: []const u8,
+    figType: []const u8,
+    page: u32,
+    caption: []const u8,
+    captionBoundary: BoxJson,
+    regionBoundary: BoxJson,
+    imageText: []const []const u8,
+    renderURL: []const u8,
+    renderDpi: u32,
+};
+
+/// Top-level JSON output matching Scala's format (with regionless-captions).
 pub const FiguresDocumentJson = struct {
     figures: []const FigureJson,
     @"regionless-captions": []const RegionlessCaptionJson,
@@ -63,6 +77,21 @@ pub fn captionToJson(cap: Caption) RegionlessCaptionJson {
         .page = cap.page,
         .text = cap.text,
         .boundary = boxToJson(cap.boundary),
+    };
+}
+
+/// Convert a SavedFigure to its JSON-serializable form.
+pub fn savedFigureToJson(sf: SavedFigure) SavedFigureJson {
+    return .{
+        .name = sf.name,
+        .figType = @tagName(sf.fig_type),
+        .page = sf.page,
+        .caption = sf.caption,
+        .captionBoundary = boxToJson(sf.caption_boundary),
+        .regionBoundary = boxToJson(sf.region_boundary),
+        .imageText = sf.image_text,
+        .renderURL = sf.render_url,
+        .renderDpi = sf.render_dpi,
     };
 }
 
@@ -96,12 +125,22 @@ pub fn figuresDocumentToJson(
     return std.json.Stringify.valueAlloc(allocator, doc, .{});
 }
 
-/// Serialize figures only (legacy flat array format, used only for tests).
+/// Serialize figures only (flat array format matching Scala's default output).
 pub fn figuresToJson(allocator: std.mem.Allocator, figures: []const Figure) ![]const u8 {
     var json_figs: std.ArrayList(FigureJson) = .empty;
     defer json_figs.deinit(allocator);
     for (figures) |fig| {
         try json_figs.append(allocator, figureToJson(fig));
+    }
+    return std.json.Stringify.valueAlloc(allocator, json_figs.items, .{});
+}
+
+/// Serialize SavedFigures to a flat JSON array (used when -m + -d are combined).
+pub fn savedFiguresToJson(allocator: std.mem.Allocator, saved_figures: []const SavedFigure) ![]const u8 {
+    var json_figs: std.ArrayList(SavedFigureJson) = .empty;
+    defer json_figs.deinit(allocator);
+    for (saved_figures) |sf| {
+        try json_figs.append(allocator, savedFigureToJson(sf));
     }
     return std.json.Stringify.valueAlloc(allocator, json_figs.items, .{});
 }

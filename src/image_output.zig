@@ -29,6 +29,73 @@ pub fn savePixmapAsPng(ctx: *c.fz_context, pixmap: *c.fz_pixmap, path: []const u
     c.fz_save_pixmap_as_png(ctx, pixmap, path_c.ptr);
 }
 
+/// Save raw RGBA pixel data as a PNG file.
+pub fn saveRgbDataAsPng(ctx: *c.fz_context, rgba_data: []const u8, width: u32, height: u32, path: []const u8) !void {
+    const pix = try copyRgbDataToPixmap(ctx, rgba_data, width, height, 1);
+    defer c.fz_drop_pixmap(ctx, pix);
+    try savePixmapAsPng(ctx, pix, path);
+}
+
+/// Copy RGBA pixel data into a new pixmap.
+fn copyRgbDataToPixmap(ctx: *c.fz_context, rgba_data: []const u8, width: u32, height: u32, alpha: c_int) !*c.fz_pixmap {
+    const pix = c.fz_new_pixmap_with_bbox(ctx, c.fz_device_rgb(ctx), .{ .x0 = 0, .y0 = 0, .x1 = @intCast(width), .y1 = @intCast(height) }, null, alpha);
+    if (pix == null) return error.PixmapError;
+
+    const n: usize = @intCast(c.fz_pixmap_components(ctx, pix));
+    const stride: usize = @intCast(c.fz_pixmap_stride(ctx, pix));
+    const samples = c.fz_pixmap_samples(ctx, pix);
+    const src_stride = @as(usize, width) * 4;
+
+    var y: u32 = 0;
+    while (y < height) : (y += 1) {
+        const src_row = @as(usize, y) * src_stride;
+        const dst_row = @as(usize, y) * stride;
+        if (n == 4) {
+            @memcpy(samples[dst_row .. dst_row + src_stride], rgba_data[src_row .. src_row + src_stride]);
+        } else {
+            // RGB only: skip alpha channel
+            var x: u32 = 0;
+            while (x < width) : (x += 1) {
+                const src_idx = src_row + @as(usize, x) * 4;
+                const dst_idx = dst_row + @as(usize, x) * n;
+                samples[dst_idx] = rgba_data[src_idx];
+                samples[dst_idx + 1] = rgba_data[src_idx + 1];
+                samples[dst_idx + 2] = rgba_data[src_idx + 2];
+            }
+        }
+    }
+
+    return pix;
+}
+
+/// Save raw RGBA pixel data in the requested format (png, jpeg, pnm, etc.).
+pub fn saveRgbDataAsFormat(ctx: *c.fz_context, rgba_data: []const u8, width: u32, height: u32, path: []const u8, format: []const u8) !void {
+    const no_alpha = std.ascii.eqlIgnoreCase(format, "jpeg") or std.ascii.eqlIgnoreCase(format, "jpg");
+    const pix = try copyRgbDataToPixmap(ctx, rgba_data, width, height, if (no_alpha) 0 else 1);
+    defer c.fz_drop_pixmap(ctx, pix);
+
+    const path_c = try std.heap.c_allocator.dupeZ(u8, path);
+    defer std.heap.c_allocator.free(path_c);
+
+    if (std.ascii.eqlIgnoreCase(format, "png")) {
+        c.fz_save_pixmap_as_png(ctx, pix, path_c.ptr);
+    } else if (std.ascii.eqlIgnoreCase(format, "jpeg") or std.ascii.eqlIgnoreCase(format, "jpg")) {
+        c.fz_save_pixmap_as_jpeg(ctx, pix, path_c.ptr, 92);
+    } else if (std.ascii.eqlIgnoreCase(format, "pnm")) {
+        c.fz_save_pixmap_as_pnm(ctx, pix, path_c.ptr);
+    } else if (std.ascii.eqlIgnoreCase(format, "pam")) {
+        c.fz_save_pixmap_as_pam(ctx, pix, path_c.ptr);
+    } else if (std.ascii.eqlIgnoreCase(format, "pbm")) {
+        c.fz_save_pixmap_as_pbm(ctx, pix, path_c.ptr);
+    } else if (std.ascii.eqlIgnoreCase(format, "pkm")) {
+        c.fz_save_pixmap_as_pkm(ctx, pix, path_c.ptr);
+    } else if (std.ascii.eqlIgnoreCase(format, "psd")) {
+        c.fz_save_pixmap_as_psd(ctx, pix, path_c.ptr);
+    } else {
+        return error.UnsupportedFormat;
+    }
+}
+
 /// Encode a pixmap as PNG to an in-memory buffer.
 /// Returns the encoded data (owned by caller's allocator).
 pub fn pixmapToPngBuffer(ctx: *c.fz_context, pixmap: *c.fz_pixmap, allocator: std.mem.Allocator) ![]u8 {

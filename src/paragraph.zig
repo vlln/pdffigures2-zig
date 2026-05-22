@@ -57,9 +57,7 @@ pub const Line = struct {
 
     /// Check if this line is horizontal (no vertical text).
     pub fn isHorizontal(self: Line) bool {
-        // In the original: words.flatMap(_.positions).forall(_.getDir == 0)
-        // We don't have TextPosition, so check if all words have normal bounds
-        return self.boundary.width() > self.boundary.height() or self.words.len == 1;
+        return self.boundary.width() > self.boundary.height();
     }
 };
 

@@ -12,7 +12,7 @@ from subprocess import check_output, call, DEVNULL
 from shutil import rmtree
 
 sys.path.insert(0, join(dirname(__file__), "..", "..", "pdffigures2", "evaluation"))
-from pdffigures_utils import Figure, FigureType, str_to_fig_type, box_overlap, Error, EvaluatedFigure
+from pdffigures_utils import Figure, FigureType, str_to_fig_type, box_overlap, Error, EvaluatedFigure, scale_figure
 
 UNION_INTERSECT_OVERLAP_THRESH = 0.8
 
@@ -42,7 +42,7 @@ def load_annotations():
             continue
         figs = []
         for f in doc_data["figures"]:
-            figs.append(Figure(
+            fig = Figure(
                 figure_type=str_to_fig_type(f["figure_type"]),
                 name=f["name"],
                 page=f["page"],
@@ -52,7 +52,12 @@ def load_annotations():
                 page_width=f.get("page_width"),
                 caption_bb=f["caption_bb"],
                 region_bb=f.get("region_bb"),
-            ))
+            )
+            caption_bb, region_bb = scale_figure(fig, 72.0)
+            fig.caption_bb = caption_bb
+            fig.region_bb = region_bb
+            fig.dpi = 72.0
+            figs.append(fig)
         annotated_pages = pages_annotated.get(doc_id, doc_data.get("pages_annotated", []))
         annotations[doc_id] = {
             "figures": figs,

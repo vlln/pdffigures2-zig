@@ -97,9 +97,17 @@ pub fn buildLayout(
     defer font_size_counts.deinit();
     var line_spacings = std.ArrayList(WeightedValue).empty;
 
+    // Track page dimensions for two-column detection
+    var max_page_x2: f64 = 0;
+    var min_page_x1: f64 = std.math.floatMax(f64);
+
     for (text_pages) |text_page| {
         var prev_line_bb: ?Box = null;
         for (text_page.paragraphs) |para| {
+            // Track page bounds from paragraph boundaries
+            if (para.boundary.x2 > max_page_x2) max_page_x2 = para.boundary.x2;
+            if (para.boundary.x1 < min_page_x1) min_page_x1 = para.boundary.x1;
+
             for (para.lines) |line| {
                 if (!line.isHorizontal()) continue;
 
@@ -213,8 +221,6 @@ pub fn buildLayout(
             most_common_width = @floatFromInt(k);
         }
     }
-    const standard_width_bucketed: ?f64 = if (most_common_width_count > total_lines * @as(u32, @intFromFloat(MinCommonLineWidthUse * 1000)) / 1000) most_common_width else null;
-    _ = standard_width_bucketed; // TODO: fix the above
 
     // Two-column detection
     // Get top 2 left margins by count
@@ -229,6 +235,7 @@ pub fn buildLayout(
         }
     }.lt);
 
+    const estimated_page_width: f64 = if (max_page_x2 > min_page_x1) max_page_x2 - min_page_x1 else 612;
     const two_column: bool = if (margin_items.items.len >= 2)
         blk: {
             const most = margin_items.items[0];
@@ -236,7 +243,7 @@ pub fn buildLayout(
             const total: f64 = @floatFromInt(most.count + second.count);
             const diff: f64 = @abs(@as(f64, @floatFromInt(most.count - second.count))) / total;
             break :blk diff < TwoColumnMaxUsageDifference and
-                @abs(@as(f64, @floatFromInt(most.x - second.x))) > TwoColumnMaxXDifference;
+                @abs(@as(f64, @floatFromInt(most.x - second.x))) > TwoColumnMaxXDifference * estimated_page_width;
         }
     else
         false;

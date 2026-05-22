@@ -86,6 +86,7 @@ pub fn extractGraphics(
         .paragraphs = paragraphs_slice,
         .graphics = fig_graphics,
         .non_figure_graphics = non_fig_graphics,
+        .raw_graphics = raw_graphics,
         .classified_text = ClassifiedText{},
     };
 }

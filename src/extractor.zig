@@ -262,6 +262,9 @@ pub fn getRasterizedFigures(
 }
 
 /// Extract figures and output JSON string.
+/// Uses object format {figures: [...], regionless-captions: [...]} for
+/// single-file mode. Batch mode uses flat array via json.figuresToJson
+/// when -d is given without -c (matching Scala).
 pub fn getFiguresJson(
     allocator: std.mem.Allocator,
     ctx: *c.fz_context,
@@ -284,6 +287,9 @@ pub const DebugPageData = struct {
     other_text: []const Paragraph,
     graphics: []const Box,
     non_figure_graphics: []const Box,
+    raw_graphics: []const Box,
+    paragraphs: []const Paragraph,
+    section_titles: []const Paragraph,
     captions: []const figure.CaptionParagraph,
     figures: []const Figure,
 };
@@ -352,6 +358,9 @@ pub fn getFiguresWithDebugData(
                 .other_text = &.{},
                 .graphics = &.{},
                 .non_figure_graphics = &.{},
+                .raw_graphics = &.{},
+                .paragraphs = page_text.paragraphs,
+                .section_titles = page_text.classified_text.section_titles,
                 .captions = &.{},
                 .figures = &.{},
             });
@@ -387,6 +396,9 @@ pub fn getFiguresWithDebugData(
             .other_text = page_with_regions.other_text,
             .graphics = page_with_regions.graphics,
             .non_figure_graphics = page_with_regions.non_figure_graphics,
+            .raw_graphics = page_with_graphics.raw_graphics,
+            .paragraphs = page_with_graphics.paragraphs,
+            .section_titles = page_text.classified_text.section_titles,
             .captions = page_with_regions.captions,
             .figures = page_with_figures.figures,
         });

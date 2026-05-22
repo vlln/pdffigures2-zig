@@ -1,72 +1,111 @@
 #!/usr/bin/env python3
-"""Download S2 dataset PDFs from Semantic Scholar S3."""
+"""
+Download S2 dataset PDFs using Semantic Scholar API + direct sources.
+Strategy:
+  1. Query S2 API for isOpenAccess, openAccessPdf.url, externalIds.ArXiv
+  2. Download from openAccessPdf.url (open access papers)
+  3. Download from arxiv.org/pdf/{id} (papers with arXiv ID)
+  4. Skip paywalled papers
+Rate limit: 1 S2 API request/second to avoid 429.
+"""
 import sys, os, json, time, urllib.request
-from os.path import join, dirname, isfile, exists
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from os.path import join, dirname, isfile
 
 S2_DIR = join(dirname(__file__), "..", "..", "pdffigures2", "evaluation", "datasets", "s2")
 PDF_DIR = join(S2_DIR, "pdfs")
 DOC_IDS_FILE = join(S2_DIR, "doc_ids.txt")
-BASE_URL = "http://s3-us-west-2.amazonaws.com/ai2-s2-pdfs/"
+S2_API = "https://api.semanticscholar.org/graph/v1/paper/"
 
-def get_urls():
-    urls = {}
-    with open(DOC_IDS_FILE) as f:
-        for line in f:
-            line = line.rstrip()
-            if " " in line:
-                doc_id, url = line.split(" ", 1)
-                urls[doc_id] = url
-            else:
-                doc_id = line
-                urls[doc_id] = BASE_URL + doc_id[:4] + "/" + doc_id[4:] + ".pdf"
-    return urls
+MIN_FILE_SIZE = 1024
 
-def download(doc_id, url, max_retries=3):
-    path = join(PDF_DIR, doc_id + ".pdf")
-    if isfile(path):
-        return doc_id, True, "already_exists"
-    for attempt in range(max_retries):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "pdffigures2-benchmark/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = resp.read()
-            with open(path, "wb") as f:
-                f.write(data)
-            return doc_id, True, "ok"
-        except Exception as e:
-            if attempt == max_retries - 1:
-                return doc_id, False, str(e)
-            time.sleep(2 ** attempt)
-    return doc_id, False, "unknown"
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; pdffigures2-benchmark/1.0)"}
+
+
+def is_valid(path):
+    return isfile(path) and os.path.getsize(path) >= MIN_FILE_SIZE
+
+
+def download_file(url, path, timeout=60):
+    if isfile(path) and os.path.getsize(path) < MIN_FILE_SIZE:
+        os.remove(path)
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = resp.read()
+    if len(data) < MIN_FILE_SIZE:
+        return False
+    with open(path, "wb") as f:
+        f.write(data)
+    return True
+
+
+def get_paper_info(doc_id):
+    url = f"{S2_API}{doc_id}?fields=isOpenAccess,openAccessPdf,externalIds"
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read())
+    is_oa = data.get("isOpenAccess", False)
+    oa_url = (data.get("openAccessPdf") or {}).get("url", "") or ""
+    arxiv_id = (data.get("externalIds") or {}).get("ArXiv") or ""
+    return is_oa, oa_url, arxiv_id
+
 
 def main():
     os.makedirs(PDF_DIR, exist_ok=True)
-    urls = get_urls()
-    print(f"Total documents: {len(urls)}")
-    existing = len([f for f in os.listdir(PDF_DIR) if f.endswith(".pdf")])
-    print(f"Already downloaded: {existing}")
-    to_download = {k: v for k, v in urls.items() if not isfile(join(PDF_DIR, k + ".pdf"))}
-    print(f"To download: {len(to_download)}")
+    with open(DOC_IDS_FILE) as f:
+        all_ids = [l.rstrip().split()[0] for l in f if l.strip()]
 
-    if len(to_download) == 0:
-        print("All PDFs already downloaded.")
-        return
+    existing = sum(1 for did in all_ids if is_valid(join(PDF_DIR, did + ".pdf")))
+    print(f"Total: {len(all_ids)}, already have: {existing}, to fetch: {len(all_ids) - existing}")
 
-    success, fail = 0, 0
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(download, did, url): did for did, url in to_download.items()}
-        for i, future in enumerate(as_completed(futures)):
-            doc_id, ok, msg = future.result()
-            if ok:
-                success += 1
-            else:
-                fail += 1
-                print(f"  FAIL {doc_id}: {msg}")
+    success, skip_paywall, skip_nopdf, fail = 0, 0, 0, 0
+
+    for i, did in enumerate(all_ids):
+        path = join(PDF_DIR, did + ".pdf")
+        if is_valid(path):
+            success += 1
+            continue
+
+        # Step 1: Get metadata from S2 API
+        try:
+            is_oa, oa_url, arxiv_id = get_paper_info(did)
+        except Exception as e:
+            fail += 1
             if (i + 1) % 50 == 0:
-                print(f"  Progress: {i+1}/{len(to_download)} (success={success}, fail={fail})")
+                print(f"  [{i+1}/{len(all_ids)}] API error: {e}")
+            time.sleep(1.0)
+            continue
 
-    print(f"\nDone. Success: {success}, Failed: {fail}")
+        # Step 2: Try to download
+        downloaded = False
+        if oa_url:
+            try:
+                downloaded = download_file(oa_url, path)
+            except Exception:
+                pass
+
+        if not downloaded and arxiv_id:
+            arxiv_url = f"https://arxiv.org/pdf/{arxiv_id}"
+            try:
+                downloaded = download_file(arxiv_url, path)
+            except Exception:
+                pass
+
+        if downloaded:
+            success += 1
+        elif is_oa or arxiv_id:
+            skip_nopdf += 1
+            print(f"  MISS {did}: OA but download failed (url={oa_url[:50] if oa_url else arxiv_id})")
+        else:
+            skip_paywall += 1
+
+        if (i + 1) % 50 == 0:
+            print(f"  [{i+1}/{len(all_ids)}] ok={success} paywall={skip_paywall} "
+                  f"nopdf={skip_nopdf} fail={fail}")
+
+        time.sleep(1.0)  # S2 API rate limit
+
+    print(f"\nDone: ok={success}, paywall={skip_paywall}, nopdf={skip_nopdf}, fail={fail}")
+
 
 if __name__ == "__main__":
     main()
