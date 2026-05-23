@@ -3,6 +3,12 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const mupdf_prefix = b.option([]const u8, "mupdf-prefix", "MuPDF installation prefix (e.g. /usr/local or ~/.local)");
+    const static_link = b.option(bool, "static", "Prefer static linking for all MuPDF dependencies") orelse false;
+
+    const link_opts: std.Build.Module.LinkSystemLibraryOptions = .{
+        .preferred_link_mode = if (static_link) .static else .dynamic,
+    };
 
     const main_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -24,9 +30,12 @@ pub fn build(b: *std.Build) void {
         "brotlidec", "brotlicommon",
     };
     for (mupdf_deps) |dep| {
-        exe.root_module.linkSystemLibrary(dep, .{});
+        exe.root_module.linkSystemLibrary(dep, link_opts);
     }
-    exe.root_module.addLibraryPath(.{ .cwd_relative = "/home/vlln/.local/lib" });
+    if (mupdf_prefix) |prefix| {
+        exe.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
+        exe.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
+    }
 
     b.installArtifact(exe);
 
@@ -42,9 +51,12 @@ pub fn build(b: *std.Build) void {
         .root_module = lib_module,
     });
     for (mupdf_deps) |dep| {
-        lib.root_module.linkSystemLibrary(dep, .{});
+        lib.root_module.linkSystemLibrary(dep, link_opts);
     }
-    lib.root_module.addLibraryPath(.{ .cwd_relative = "/home/vlln/.local/lib" });
+    if (mupdf_prefix) |prefix| {
+        lib.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
+        lib.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
+    }
     b.installArtifact(lib);
     b.installFile("include/pdffigures2.h", "include/pdffigures2.h");
 
@@ -62,9 +74,12 @@ pub fn build(b: *std.Build) void {
         .root_module = exe.root_module,
     });
     for (mupdf_deps) |dep| {
-        exe_tests.root_module.linkSystemLibrary(dep, .{});
+        exe_tests.root_module.linkSystemLibrary(dep, link_opts);
     }
-    exe_tests.root_module.addLibraryPath(.{ .cwd_relative = "/home/vlln/.local/lib" });
+    if (mupdf_prefix) |prefix| {
+        exe_tests.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
+        exe_tests.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
+    }
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run tests");
