@@ -33,9 +33,9 @@ jobs:
 
       - name: Install Zig
         run: |
-          wget -q https://ziglang.org/builds/zig-linux-x86_64-0.17.0-dev.269+ebff43698.tar.xz
-          tar -xf zig-linux-x86_64-0.17.0-dev.269+ebff43698.tar.xz
-          echo "$PWD/zig-linux-x86_64-0.17.0-dev.269+ebff43698" >> "$GITHUB_PATH"
+          wget -q https://github.com/vlln/pdffigures2-zig/releases/download/zig-bootstrap/zig-0.17.0-dev.269.tar.xz
+          tar -xf zig-0.17.0-dev.269.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.17.0-dev.269+ebff43698" >> "$GITHUB_PATH"
 
       - name: Run tests
         run: zig build test -Doptimize=ReleaseSmall
