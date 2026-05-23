@@ -38,7 +38,7 @@ jobs:
           echo "$PWD/zig-x86_64-linux-0.17.0-dev.269+ebff43698" >> "$GITHUB_PATH"
 
       - name: Run tests
-        run: zig build test -Doptimize=ReleaseSmall
+        run: zig build test -Doptimize=ReleaseSmall -Dskip-e2e=true
 
       - name: Build binary
         run: zig build -Doptimize=ReleaseSmall

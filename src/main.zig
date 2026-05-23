@@ -3,7 +3,7 @@ const c = @import("mupdf.zig");
 const extractor = @import("extractor.zig");
 const cli_batch = @import("cli/batch.zig");
 const cli_visualize = @import("cli/visualize.zig");
-test { _ = @import("e2e_test.zig"); }
+test { if (!@import("build_options").skip_e2e) _ = @import("e2e_test.zig"); }
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;

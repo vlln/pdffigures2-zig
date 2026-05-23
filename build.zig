@@ -5,16 +5,21 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const mupdf_prefix = b.option([]const u8, "mupdf-prefix", "MuPDF installation prefix (e.g. /usr/local or ~/.local)");
     const static_link = b.option(bool, "static", "Prefer static linking for all MuPDF dependencies") orelse false;
+    const skip_e2e = b.option(bool, "skip-e2e", "Skip end-to-end tests that require local PDF files") orelse false;
 
     const link_opts: std.Build.Module.LinkSystemLibraryOptions = .{
         .preferred_link_mode = if (static_link) .static else .dynamic,
     };
+
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "skip_e2e", skip_e2e);
 
     const main_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
+    main_module.addOptions("build_options", build_options);
 
     const exe = b.addExecutable(.{
         .name = "pdffigures2",
