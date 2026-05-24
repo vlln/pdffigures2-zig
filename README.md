@@ -20,11 +20,30 @@ This project is a **literal translation** of PDFFigures 2.0 into Zig, replacing 
 This is a faithful port, not a rewrite. The objective is not to "improve" the algorithm, but to:
 
 1. **Output equivalence**: Same PDF → same Figure/Table detections, within f64 epsilon.
-2. **Single native binary**: One statically-linked executable (~42 MB ReleaseSmall), no runtime dependencies beyond `libmupdf`. Milliseconds to start, not seconds.
+2. **Single native binary**: One native executable (~42 MB ReleaseSmall), dynamically linked against standard system libraries. Milliseconds to start, not seconds.
 3. **Embeddable**: C ABI shared library for direct use from Python, Node.js, Go, etc. Also supports JSON stdin/stdout integration.
 4. **Full pipeline parity**: Text → Formatting → Layout → Captions → Graphics → Classification → Figure Detection — all stages implemented.
 
 ## Quick Start
+
+### Download Pre-built Binary
+
+Get the latest binary from [GitHub Releases](https://github.com/vlln/pdffigures2-zig/releases):
+
+```bash
+wget https://github.com/vlln/pdffigures2-zig/releases/latest/download/pdffigures2
+chmod +x pdffigures2
+./pdffigures2 paper.pdf
+```
+
+Runtime dependencies (Ubuntu/Debian):
+
+```bash
+sudo apt install libmupdf libmujs3 libgumbo2 libopenjp2-7 libjbig2dec0 \
+  libjpeg8 libharfbuzz0b libfreetype6 libpng16-16 libbrotli1
+```
+
+### Build from Source
 
 ```bash
 # Debug build
@@ -42,6 +61,8 @@ zig build test
 
 ## Dependencies
 
+### Building from Source
+
 - **Zig** 0.17.0-dev.269+ (nightly)
 - **MuPDF** development libraries (via pkg-config) and all transitive dependencies
 
@@ -53,7 +74,15 @@ sudo apt install libmupdf-dev libmujs-dev libjpeg-dev libharfbuzz-dev \
   libgumbo-dev
 ```
 
-Building MuPDF from source is also supported; ensure `pkg-config` can locate it.
+If MuPDF is installed to a non-standard prefix (e.g. `~/.local`), pass the path:
+
+```bash
+zig build -Dmupdf-prefix=$HOME/.local
+```
+
+### Runtime (Pre-built Binary)
+
+See [Quick Start](#quick-start) for the minimal runtime package list. The pre-built binary dynamically links against standard system libraries — no compilation required.
 
 ## CLI Usage
 
