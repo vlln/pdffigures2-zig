@@ -1,6 +1,10 @@
 # Build output
 zig-out/
 .zig-cache/
+a.out
+
+# Debug artifacts
+viz_output/
 
 # IDE
 .vscode/
