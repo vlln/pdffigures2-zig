@@ -29,6 +29,31 @@ const MinWordGapFraction: f64 = 2.0;
 const MinWordGapAbsolute: f64 = 4.0;
 const DefaultFontSizeForGap: f64 = 8.0;
 
+/// Returns true if codepoint is a whitespace or control character.
+/// Matches Java's Character.isWhitespace + Character.isISOControl,
+/// which the Scala reference uses to split words.
+fn isSeparator(codepoint: u21) bool {
+    return switch (codepoint) {
+        // ASCII control (including tab, newline, return)
+        0x0000...0x001F => true,
+        // DEL + C1 control chars
+        0x007F...0x009F => true,
+        // ASCII space
+        ' ' => true,
+        // Unicode whitespace (Java Character.isWhitespace)
+        0x1680 => true, // OGHAM SPACE MARK
+        0x2000...0x200A => true, // EN QUAD..HAIR SPACE
+        0x2028 => true, // LINE SEPARATOR
+        0x2029 => true, // PARAGRAPH SEPARATOR
+        0x202F => true, // NARROW NO-BREAK SPACE
+        0x205F => true, // MEDIUM MATHEMATICAL SPACE
+        0x3000 => true, // IDEOGRAPHIC SPACE
+        // Non-breaking spaces (Java Character.isSpaceChar)
+        0x00A0 => true, // NO-BREAK SPACE
+        else => false,
+    };
+}
+
 /// Extract structured text from a MuPDF document.
 /// Returns a list of PageWithText, one per page.
 pub fn extractText(arena: std.mem.Allocator, ctx: *c.fz_context, doc: *c.fz_document) ![]PageWithText {
@@ -94,11 +119,7 @@ pub fn extractText(arena: std.mem.Allocator, ctx: *c.fz_context, doc: *c.fz_docu
                     const char_max_y: f64 = @floatCast(@max(@max(q.ul.y, q.ur.y), @max(q.ll.y, q.lr.y)));
 
                     // Gap-based word splitting for table data with absolute positioning
-                    if (string_buf.items.len > 0 and
-                        !(codepoint == ' ' or codepoint == '\t' or codepoint == '\n' or
-                            codepoint == '\r' or codepoint <= 0x1F or
-                            (codepoint >= 0x7F and codepoint <= 0x9F)))
-                    {
+                    if (string_buf.items.len > 0 and !isSeparator(codepoint)) {
                         if (prev_char_max_x) |prev_x| {
                             const gap = char_min_x - prev_x;
                             if (gap > 0) {
@@ -127,14 +148,8 @@ pub fn extractText(arena: std.mem.Allocator, ctx: *c.fz_context, doc: *c.fz_docu
                         }
                     }
 
-                    // Check if this is a space or control character
-                    if (codepoint == ' ' or
-                        codepoint == '\t' or
-                        codepoint == '\n' or
-                        codepoint == '\r' or
-                        codepoint <= 0x1F or
-                        (codepoint >= 0x7F and codepoint <= 0x9F))
-                    {
+                    // Check if this is a separator character
+                    if (isSeparator(codepoint)) {
                         // Finish current word
                         if (string_buf.items.len > 0) {
                             const word = try finishWord(

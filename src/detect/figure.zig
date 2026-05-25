@@ -257,6 +257,9 @@ fn clipUpwardRegion(
 
     for (graphics) |g| {
         if (region.intersectArea(g) / g.area() > 0.95) {
+            // Skip full-width decorative elements (header bars, footer lines)
+            // that would pull the cluster to page edges and mask figure content.
+            if (g.width() > region.width() * 0.9 and g.height() < 30) continue;
             contained_graphics.append(gpa, g) catch continue;
         }
     }
@@ -355,6 +358,10 @@ fn scoreProposal(
     var area_score = boundary.area() / bounds.area();
 
     for (graphics) |g| {
+        // Skip tiny items (individual characters, small decorations) that
+        // inflate the score of proposals covering headers/footers. Consistent
+        // with boxCutsFigure which already skips area < 200.
+        if (g.area() < 200) continue;
         if (boundary.contains(g, 0)) {
             area_score += ContainsGraphicBonus;
             if (g.area() > LargeGraphicThreshold) {
@@ -601,17 +608,30 @@ fn buildProposals(
             if (cropped) |cr| {
                 // When Box.crop didn't tighten x-range (still at proposal edges),
                 // the content boxes span the full column width. Constrain to the
-                // caption's x-range with a tight margin.
+                // caption's x-range with a tight margin — but only if there are no
+                // wider graphics that extend beyond the caption (e.g., figure images
+                // that are wider than their caption labels).
                 if (prop.dir == .up) {
                     var cr_val = cr;
                     if (cr_val.x1 == prop.region.x1 and cr_val.x2 == prop.region.x2) {
-                        const margin: f64 = 2;
-                        cr_val = Box.init(
-                            @max(cr_val.x1, capt_box.x1 - margin),
-                            cr_val.y1,
-                            @min(cr_val.x2, capt_box.x2 + margin),
-                            cr_val.y2,
-                        );
+                        var has_wider = false;
+                        for (page_body.graphics) |g| {
+                            if (g.intersects(cr_val, 0) and
+                                (g.x1 < capt_box.x1 - 5 or g.x2 > capt_box.x2 + 5))
+                            {
+                                has_wider = true;
+                                break;
+                            }
+                        }
+                        if (!has_wider) {
+                            const margin: f64 = 2;
+                            cr_val = Box.init(
+                                @max(cr_val.x1, capt_box.x1 - margin),
+                                cr_val.y1,
+                                @min(cr_val.x2, capt_box.x2 + margin),
+                                cr_val.y2,
+                            );
+                        }
                     }
                     if (cr_val.area() < cr.area()) {
                         cropped = cr_val;
@@ -639,7 +659,9 @@ fn buildProposals(
                         break;
                     }
                 }
-                if (contains_other) continue;
+                if (contains_other) {
+                    continue;
+                }
             }
             try valid_proposals.append(allocator, .{ .region = cr, .caption = prop.caption, .dir = prop.dir, .split_with = prop.split_with });
         }
